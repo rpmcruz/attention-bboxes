@@ -16,23 +16,28 @@ grid ⊙ scores      (hidden)   output
 '''
 
 class BasicGrid(torch.nn.Module):
-    def __init__(self, num_classes):
+    def __init__(self, num_classes, use_softmax):
         super().__init__()
-        # image 96x96 ---> grid 12x12
+        # image 96x96 ---> grid 6x6
         self.grid = torch.nn.Sequential(        # 96x96
             torch.nn.LazyConv2d(128, 3, 2, 1),  # 48x48
             torch.nn.LazyConv2d(256, 3, 2, 1),  # 24x24
             torch.nn.LazyConv2d(512, 3, 2, 1),  # 12x12
+            torch.nn.LazyConv2d(1024, 3, 2, 1), # 6x6
         )
         self.scores = torch.nn.LazyConv2d(1, 1)
         self.output = torch.nn.LazyLinear(num_classes)
+        self.use_softmax = use_softmax
 
     def forward(self, images):
         grid = self.grid(images)
         scores = self.scores(grid)
         # temporarily flatten scores matrix because pytorch softmax can only be
         # done across one single dimension
-        scores = torch.softmax(torch.flatten(scores, 2), 2).view(*scores.shape)
+        if self.use_softmax:
+            scores = torch.softmax(torch.flatten(scores, 2), 2).view(*scores.shape)
+        else:
+            scores = torch.sigmoid(scores)
         hidden = torch.sum(grid * scores, (2, 3))
         return self.output(hidden), scores
 
@@ -77,11 +82,12 @@ def extract_bboxes_from_images(images, bboxes, region_size):
 class BboxGrid(torch.nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        # image 96x96 ---> grid 12x12
+        # image 96x96 ---> grid 6x6
         self.grid = torch.nn.Sequential(        # 96x96
             torch.nn.LazyConv2d(128, 3, 2, 1),  # 48x48
             torch.nn.LazyConv2d(256, 3, 2, 1),  # 24x24
-            torch.nn.LazyConv2d(5, 3, 2, 1),    # 12x12
+            torch.nn.LazyConv2d(512, 3, 2, 1),  # 12x12
+            torch.nn.LazyConv2d(5, 3, 2, 1),    # 6x6
         )
         # region 12x12 ---> latent 256
         self.regions = torch.nn.Sequential(     # 12x12

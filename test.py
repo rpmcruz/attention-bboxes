@@ -31,13 +31,15 @@ for x, y in ts:
     with torch.no_grad():
         pred, scores = model(x)
         pred = pred.argmax(1)
-    print('scores:', scores)
     hue = 1-scores
     hue = torch.nn.functional.interpolate(hue, (96, 96))
     hue = torch.cat((torch.ones_like(hue), hue, hue), 1)
     show = 0.5*x + 0.5*hue
     plt.imshow(show[0].permute(1, 2, 0).cpu())
-    plt.hlines(range(12, 96, 12), 0, show.shape[3], 'green')
-    plt.vlines(range(12, 96, 12), 0, show.shape[2], 'green')
+    plt.hlines(range(16, 96, 16), 0, show.shape[3], 'green')
+    plt.vlines(range(16, 96, 16), 0, show.shape[2], 'green')
+    for i in range(scores.shape[2]):
+        for j in range(scores.shape[3]):
+            plt.text(j*16, i*16, f'{scores[0, 0, i, j]*100:02.0f}', va='top')
     plt.title(f'Y={y[0]} Ŷ={pred[0].cpu()}')
     plt.show()

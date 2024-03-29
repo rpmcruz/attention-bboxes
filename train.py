@@ -2,6 +2,8 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('model')
 parser.add_argument('--epochs', type=int, default=1000)
+parser.add_argument('--penalty', type=float, default=10)
+parser.add_argument('--softmax', action='store_true')
 args = parser.parse_args()
 
 import torch
@@ -23,7 +25,7 @@ tr = torch.utils.data.DataLoader(tr, 32, True, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
 
-model = getattr(models, args.model)(10)
+model = getattr(models, args.model)(10, args.softmax)
 model.to(device)
 opt = torch.optim.Adam(model.parameters(), 1e-4)
 
@@ -36,13 +38,14 @@ for epoch in range(args.epochs):
     for x, y in tr:
         x = x.to(device)
         y = y.to(device)
-        pred, _ = model(x)
+        pred, scores = model(x)
         loss = torch.nn.functional.cross_entropy(pred, y)
+        loss += args.penalty*scores.mean()
         opt.zero_grad()
         loss.backward()
         opt.step()
         avg_loss += float(loss) / len(tr)
     toc = time()
-    print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f} - Avg loss: {avg_loss}')
+    print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss}')
 
 torch.save(model.cpu(), f'model-{args.model}.pth')
