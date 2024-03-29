@@ -100,13 +100,14 @@ class BboxGrid(torch.nn.Module):
         grid = self.grid(images)
         # grid is (cy, cx, h, w, scores)
         rr, cc = torch.meshgrid(torch.arange(grid.shape[2]), torch.arange(grid.shape[3]), indexing='ij')
-        centers = torch.sigmoid(grid[:, 0:2]) + torch.stack((rr, cc))[None, :, None, None]
-        sizes = torch.sigmoid(grid[:, 2:4]) * torch.tensor(images.shape[[2, 3]])[None, :, None, None]
+        rescale = torch.tensor(images.shape[[2, 3]])[None, :, None, None]
+        centers = rescale * (torch.sigmoid(grid[:, 0:2]) + torch.stack((rr, cc))[None, :, None, None])
+        sizes = rescale * torch.sigmoid(grid[:, 2:4])
+        # our bboxes are (y1, x1, y2, x2)
         bboxes = torch.cat((centers-sizes/2, centers+sizes/2), 1)
         bboxes[:, [0, 1]] = torch.clamp(bboxes[:, [0, 1]], min=0)
-        bboxes[:, 2] = torch.clamp(bboxes[:, 2], max=images.shape[2])
-        bboxes[:, 3] = torch.clamp(bboxes[:, 3], max=images.shape[3])
-        # bboxes are (y1, x1, y2, x2)
+        bboxes[:, 2] = torch.clamp(bboxes[:, 2], max=images.shape[2]-1)
+        bboxes[:, 3] = torch.clamp(bboxes[:, 3], max=images.shape[3]-1)
         scores = grid[:, [4]]
         # temporarily flatten scores matrix because pytorch softmax can only be
         # done across one single dimension
