@@ -100,9 +100,10 @@ class BboxGrid(torch.nn.Module):
         grid = self.grid(images)
         # grid is (cy, cx, h, w, scores)
         rr, cc = torch.meshgrid(torch.arange(grid.shape[2]), torch.arange(grid.shape[3]), indexing='ij')
-        rescale = torch.tensor(images.shape[[2, 3]])[None, :, None, None]
-        centers = rescale * (torch.sigmoid(grid[:, 0:2]) + torch.stack((rr, cc))[None, :, None, None])
-        sizes = rescale * torch.sigmoid(grid[:, 2:4])
+        centers_rescale = (torch.tensor(images.shape[[2, 3]])/torch.tensor(grid.shape[[2, 3]]))[None, :, None, None]
+        sizes_rescale = torch.tensor(images.shape[[2, 3]])[None, :, None, None]
+        centers = centers_rescale * (torch.sigmoid(grid[:, 0:2]) + torch.stack((rr, cc))[None, :, None, None])
+        sizes = sizes_rescale * torch.sigmoid(grid[:, 2:4])
         # our bboxes are (y1, x1, y2, x2)
         bboxes = torch.cat((centers-sizes/2, centers+sizes/2), 1)
         bboxes[:, [0, 1]] = torch.clamp(bboxes[:, [0, 1]], min=0)
