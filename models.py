@@ -69,7 +69,7 @@ latent ⊙ scores    (hidden)   output
     □□□               □
 '''
 
-def extract_bboxes_from_images(images, bboxes, region_size):
+def extract_roi(images, bboxes, region_size):
     bboxes = bboxes.int()
     regions = torch.zeros((bboxes.shape[0], 3, bboxes.shape[2], bboxes.shape[3]))
     for i, (image, image_bboxes) in enumerate(zip(images, bboxes)):
@@ -112,7 +112,7 @@ class BboxGrid(torch.nn.Module):
         # done across one single dimension
         scores = torch.softmax(torch.flatten(scores, 2), 2).view(*scores.shape)
         # extract bounding boxes
-        regions = extract_bboxes_from_images(images, bboxes, (12, 12))
+        regions = extract_roi(images, bboxes, (12, 12))
         # another cnn on each region
         latent = self.regions(regions)
         # attention
