@@ -50,19 +50,13 @@ image      grid bboxes (cx,cy,log(w),log(h),score)
 □□□□□
 
 (Part 2)
-image      extract bboxes
-□□□□□       □ □ □
-□□□□□  ==>  □ □ □
-□□□□□       □ □ □
+image      extract bboxes     latent
+□□□□□       □ □ □             □ □ □
+□□□□□  ==>  □ □ □        ==>  □ □ □
+□□□□□       □ □ □             □ □ □
 □□□□□
 
-(Part 4)
-extract bboxes     latent
-□ □ □              □ □ □
-□ □ □         ==>  □ □ □
-□ □ □              □ □ □
-
-(Part 5)
+(Part 3)
 latent ⊙ scores    (hidden)   output
     □□□               □
     □□□         ==>   □   ==>  □
