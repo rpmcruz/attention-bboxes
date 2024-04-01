@@ -6,6 +6,7 @@ args = parser.parse_args()
 import torch
 from torchvision.transforms import v2
 import matplotlib.pyplot as plt
+from matplotlib import patches
 import data
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -29,7 +30,7 @@ model.eval()
 for x, y in ts:
     x = x.to(device)
     with torch.no_grad():
-        pred, scores = model(x)
+        pred, scores, bboxes = model(x)
         pred = pred.argmax(1)
     hue = 1-scores
     hue = torch.nn.functional.interpolate(hue, (96, 96))
@@ -41,5 +42,7 @@ for x, y in ts:
     for i in range(scores.shape[2]):
         for j in range(scores.shape[3]):
             plt.text(j*16, i*16, f'{scores[0, 0, i, j]*100:02.0f}', va='top')
+    for (x1, y1, x2, y2) in bboxes[0]:
+        plt.gca().add_patch(patches.Rectangle((x1, y1), x2-x1, y2-y1, linewidth=1, edgecolor='r', facecolor='none'))
     plt.title(f'Y={y[0]} Ŷ={pred[0].cpu()}')
     plt.show()

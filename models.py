@@ -39,7 +39,7 @@ class BasicGrid(torch.nn.Module):
         else:
             scores = torch.sigmoid(scores)
         hidden = torch.sum(grid * scores, (2, 3))
-        return self.output(hidden), scores
+        return self.output(hidden), scores, None
 
 '''
 (Part 1)
@@ -93,7 +93,7 @@ class BboxGrid(torch.nn.Module):
     def forward(self, images):
         grid = self.grid(images)
         # grid is (cy, cx, h, w, scores)
-        rr, cc = torch.meshgrid(torch.arange(grid.shape[2]), torch.arange(grid.shape[3]), indexing='ij')
+        rr, cc = torch.meshgrid(torch.arange(grid.shape[2], device=images.device), torch.arange(grid.shape[3], device=images.device), indexing='ij')
         centers_rescale = (torch.tensor(images.shape[[2, 3]])/torch.tensor(grid.shape[[2, 3]]))[None, :, None, None]
         sizes_rescale = torch.tensor(images.shape[[2, 3]])[None, :, None, None]
         centers = centers_rescale * (torch.sigmoid(grid[:, 0:2]) + torch.stack((rr, cc))[None, :, None, None])
@@ -113,4 +113,76 @@ class BboxGrid(torch.nn.Module):
         latent = self.regions(regions)
         # attention
         hidden = torch.sum(latent * scores, (2, 3))
-        return self.output(hidden), scores
+        return self.output(hidden), scores, None
+
+'''
+(Part 1)
+image      grid latent    gaussian (cx,cy,log(varx),log(vary))
+□□□□□       □□□             □□□
+□□□□□  ==>  □□□       =>    □□□
+□□□□□       □□□             □□□
+□□□□□
+
+(Part 2)
+grid gaussian      pdf gaussian
+    □□□               □□□
+    □□□         ==>   □□□
+    □□□               □□□
+
+(Part 3)
+latent ⊙ pdf      (hidden)   output
+    □□□               □
+    □□□         ==>   □   ==>  □
+    □□□               □
+'''
+
+def gaussian_pdf(x, avg, stdev):
+    sqrt2pi = 2.5066282746310002
+    return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
+
+class GaussianGrid(torch.nn.Module):
+    # use_softmax is ignored
+    def __init__(self, num_classes, use_softmax):
+        super().__init__()
+        # image 96x96 ---> grid 6x6
+        self.grid = torch.nn.Sequential(        # 96x96
+            torch.nn.LazyConv2d(128, 3, 2, 1),  # 48x48
+            torch.nn.LazyConv2d(256, 3, 2, 1),  # 24x24
+            torch.nn.LazyConv2d(512, 3, 2, 1),  # 12x12
+            torch.nn.LazyConv2d(1024, 3, 2, 1), # 6x6
+        )
+        self.gaussian = torch.nn.LazyConv2d(5, 1)
+        self.output = torch.nn.LazyLinear(num_classes)
+
+    def forward(self, images):
+        grid = self.grid(images)
+        gauss = self.gaussian(grid)
+        xx, yy = torch.meshgrid(torch.arange(grid.shape[3], device=images.device), torch.arange(grid.shape[2], device=images.device), indexing='xy')
+        x_gauss_avg = torch.flatten(torch.sigmoid(gauss[:, 0]) + xx, 1)
+        y_gauss_avg = torch.flatten(torch.sigmoid(gauss[:, 1]) + yy, 1)
+        x_gauss_stdev = torch.flatten(torch.exp(gauss[:, 2]), 1)
+        y_gauss_stdev = torch.flatten(torch.exp(gauss[:, 3]), 1)
+        score_gauss = torch.flatten(torch.sigmoid(gauss[:, 4]), 1)
+        x_prob = gaussian_pdf(xx[None, None], x_gauss_avg[..., None, None], x_gauss_stdev[..., None, None])
+        y_prob = gaussian_pdf(yy[None, None], y_gauss_avg[..., None, None], y_gauss_stdev[..., None, None])
+        scores = torch.sum(score_gauss[:, :, None, None] * (x_prob*y_prob), 1, True)
+        hidden = torch.sum(scores * grid, [2, 3])
+        # 68.27% of the data falls below 1 stddev of the mean
+        # 95.00% of the data falls below 2 stddevs of the mean
+        n = 1
+        xscale = images.shape[3] / grid.shape[3]
+        yscale = images.shape[2] / grid.shape[2]
+        bboxes = torch.stack((
+            xscale * torch.clamp(x_gauss_avg-n*x_gauss_stdev, min=0),
+            yscale * torch.clamp(y_gauss_avg-n*y_gauss_stdev, min=0),
+            xscale * torch.clamp(x_gauss_avg+n*x_gauss_stdev, max=grid.shape[3]),
+            yscale * torch.clamp(y_gauss_avg+n*y_gauss_stdev, max=grid.shape[2])
+        ), 2)
+        # filter those bounding boxes below a certain level of confidence
+        conf = 0.25
+        bboxes = [[bbox for bbox, score in zip(bboxes[i], score_gauss[i]) if score >= conf] for i in range(bboxes.shape[0])]
+        return self.output(hidden), scores, bboxes
+
+if __name__ == '__main__':
+    m = GaussianGrid(5)
+    out = m(torch.zeros(5, 3, 256, 256))

@@ -20,7 +20,7 @@ transforms = v2.Compose([
     v2.ColorJitter(25, 25),
     v2.ToDtype(torch.float32, True),
 ])
-tr = data.STL10('/data2/toys', 'train', transforms)
+tr = data.STL10('/data/toys', 'train', transforms)
 tr = torch.utils.data.DataLoader(tr, 32, True, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
@@ -38,7 +38,7 @@ for epoch in range(args.epochs):
     for x, y in tr:
         x = x.to(device)
         y = y.to(device)
-        pred, scores = model(x)
+        pred, scores, _ = model(x)
         loss = torch.nn.functional.cross_entropy(pred, y)
         loss += args.penalty*scores.mean()
         opt.zero_grad()
@@ -48,4 +48,4 @@ for epoch in range(args.epochs):
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss}')
 
-torch.save(model.cpu(), f'model-{args.model}.pth')
+torch.save(model.cpu(), f'model-{args.model}-penalty-{args.penalty}.pth')
