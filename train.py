@@ -54,4 +54,4 @@ for epoch in range(args.epochs):
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss}')
 
-torch.save(model.cpu(), f'model-{args.model}-penalty-{args.penalty1}-{args.penalty2}.pth')
+torch.save(model.cpu(), f'model-{args.model}-penalty-{args.penalty1}-{args.penalty2}-usesoftmax-{int(args.use_softmax)}.pth')

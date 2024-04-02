@@ -153,6 +153,7 @@ class GaussianGrid(torch.nn.Module):
         )
         self.gaussian = torch.nn.LazyConv2d(5, 1)
         self.output = torch.nn.LazyLinear(num_classes)
+        self.use_softmax = use_softmax
 
     def forward(self, images):
         grid = self.grid(images)
@@ -166,7 +167,10 @@ class GaussianGrid(torch.nn.Module):
         stdev_epsilon = 0.01
         x_gauss_stdev = torch.flatten(stdev_act(gauss[:, 2]), 1) + stdev_epsilon
         y_gauss_stdev = torch.flatten(stdev_act(gauss[:, 3]), 1) + stdev_epsilon
-        score_gauss = torch.flatten(torch.sigmoid(gauss[:, 4]), 1)
+        if self.use_softmax:
+            score_gauss = torch.softmax(torch.flatten(gauss[:, 4], 1), 1)
+        else:
+            score_gauss = torch.sigmoid(torch.flatten(gauss[:, 4], 1))
         x_prob = gaussian_pdf(xx[None, None], x_gauss_avg[..., None, None], x_gauss_stdev[..., None, None])
         y_prob = gaussian_pdf(yy[None, None], y_gauss_avg[..., None, None], y_gauss_stdev[..., None, None])
         # sum(score_gauss) != 1, therefore this is not actually a weighted average.

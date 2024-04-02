@@ -2,6 +2,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('model')
 parser.add_argument('--bbox-confidence', type=float, default=0.5)
+parser.add_argument('--top-bboxes', type=int)
 parser.add_argument('--deviation-confidence', type=float, default=1.5)
 args = parser.parse_args()
 
@@ -48,7 +49,10 @@ for x, y in ts:
         # filter those bounding boxes below a certain level of confidence
         batch_scores = bboxes[f'scores']
         batch_bboxes = bboxes[f'bboxes_dev{args.deviation_confidence}']
-        bboxes = [[bbox.cpu() for score, bbox in zip(scores, bboxes) if score >= args.bbox_confidence] for scores, bboxes in zip(batch_scores, batch_bboxes)]
+        if args.top_bboxes != None:
+            bboxes = [[bboxes[i].cpu() for i in scores.argsort(descending=True)[:5]] for scores, bboxes in zip(batch_scores, batch_bboxes)]
+        else:
+            bboxes = [[bbox.cpu() for score, bbox in zip(scores, bboxes) if score >= args.bbox_confidence] for scores, bboxes in zip(batch_scores, batch_bboxes)]
         for (x1, y1, x2, y2) in bboxes[0]:
             plt.gca().add_patch(patches.Rectangle((x1, y1), x2-x1, y2-y1, linewidth=1, edgecolor='r', facecolor='none'))
     plt.title(f'Y={y[0]} Ŷ={pred[0].cpu()}')
