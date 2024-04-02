@@ -1,9 +1,10 @@
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('model')
-parser.add_argument('--epochs', type=int, default=1000)
-parser.add_argument('--penalty', type=float, default=10)
-parser.add_argument('--softmax', action='store_true')
+parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--penalty1', type=float, default=10)
+parser.add_argument('--penalty2', type=float, default=1)
+parser.add_argument('--use-softmax', action='store_true')
 args = parser.parse_args()
 
 import torch
@@ -25,7 +26,7 @@ tr = torch.utils.data.DataLoader(tr, 32, True, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
 
-model = getattr(models, args.model)(10, args.softmax)
+model = getattr(models, args.model)(10, args.use_softmax)
 model.to(device)
 opt = torch.optim.Adam(model.parameters(), 1e-4)
 
@@ -38,9 +39,14 @@ for epoch in range(args.epochs):
     for x, y in tr:
         x = x.to(device)
         y = y.to(device)
-        pred, scores, _ = model(x)
+        pred, scores, bboxes = model(x)
         loss = torch.nn.functional.cross_entropy(pred, y)
-        loss += args.penalty*scores.mean()
+        if bboxes != None:
+            loss += args.penalty1 * bboxes['scores'].mean()
+            loss += args.penalty2 * bboxes['x_gauss_stdev'].mean()
+            loss += args.penalty2 * bboxes['y_gauss_stdev'].mean()
+        else:
+            loss += args.penalty1 * scores.mean()
         opt.zero_grad()
         loss.backward()
         opt.step()
@@ -48,4 +54,4 @@ for epoch in range(args.epochs):
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss}')
 
-torch.save(model.cpu(), f'model-{args.model}-penalty-{args.penalty}.pth')
+torch.save(model.cpu(), f'model-{args.model}-penalty-{args.penalty1}-{args.penalty2}.pth')

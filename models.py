@@ -160,27 +160,38 @@ class GaussianGrid(torch.nn.Module):
         xx, yy = torch.meshgrid(torch.arange(grid.shape[3], device=images.device), torch.arange(grid.shape[2], device=images.device), indexing='xy')
         x_gauss_avg = torch.flatten(torch.sigmoid(gauss[:, 0]) + xx, 1)
         y_gauss_avg = torch.flatten(torch.sigmoid(gauss[:, 1]) + yy, 1)
-        x_gauss_stdev = torch.flatten(torch.exp(gauss[:, 2]), 1)
-        y_gauss_stdev = torch.flatten(torch.exp(gauss[:, 3]), 1)
+        # if stdev is too small, the pdf explodes. therefore we use an epsilon
+        # (minimum) of stdev_epsilon.
+        stdev_act = torch.nn.functional.softplus  # or torch.exp()?
+        stdev_epsilon = 0.01
+        x_gauss_stdev = torch.flatten(stdev_act(gauss[:, 2]), 1) + stdev_epsilon
+        y_gauss_stdev = torch.flatten(stdev_act(gauss[:, 3]), 1) + stdev_epsilon
         score_gauss = torch.flatten(torch.sigmoid(gauss[:, 4]), 1)
         x_prob = gaussian_pdf(xx[None, None], x_gauss_avg[..., None, None], x_gauss_stdev[..., None, None])
         y_prob = gaussian_pdf(yy[None, None], y_gauss_avg[..., None, None], y_gauss_stdev[..., None, None])
+        # sum(score_gauss) != 1, therefore this is not actually a weighted average.
+        # not sure if torch.sum() is the most appropriate
         scores = torch.sum(score_gauss[:, :, None, None] * (x_prob*y_prob), 1, True)
         hidden = torch.sum(scores * grid, [2, 3])
-        # 68.27% of the data falls below 1 stddev of the mean
-        # 95.00% of the data falls below 2 stddevs of the mean
-        n = 1
+        # 68.27% of the data falls within 1 stddev of the mean
+        # 86.64% of the data falls within 1.5 stddevs of the mean
+        # 95.44% of the data falls within 2 stddevs of the mean
         xscale = images.shape[3] / grid.shape[3]
         yscale = images.shape[2] / grid.shape[2]
-        bboxes = torch.stack((
-            xscale * torch.clamp(x_gauss_avg-n*x_gauss_stdev, min=0),
-            yscale * torch.clamp(y_gauss_avg-n*y_gauss_stdev, min=0),
-            xscale * torch.clamp(x_gauss_avg+n*x_gauss_stdev, max=grid.shape[3]),
-            yscale * torch.clamp(y_gauss_avg+n*y_gauss_stdev, max=grid.shape[2])
-        ), 2)
-        # filter those bounding boxes below a certain level of confidence
-        conf = 0.25
-        bboxes = [[bbox for bbox, score in zip(bboxes[i], score_gauss[i]) if score >= conf] for i in range(bboxes.shape[0])]
+        bboxes = {}
+        for n in [1, 1.5, 2]:
+            bboxes[f'bboxes_dev{n}'] = torch.stack((
+                xscale * torch.clamp(x_gauss_avg-n*x_gauss_stdev, min=0),
+                yscale * torch.clamp(y_gauss_avg-n*y_gauss_stdev, min=0),
+                xscale * torch.clamp(x_gauss_avg+n*x_gauss_stdev, max=grid.shape[3]),
+                yscale * torch.clamp(y_gauss_avg+n*y_gauss_stdev, max=grid.shape[2])
+            ), 2)
+        bboxes['scores'] = score_gauss
+        bboxes['x_gauss_avg'] = x_gauss_avg
+        bboxes['y_gauss_avg'] = y_gauss_avg
+        bboxes['x_gauss_stdev'] = x_gauss_stdev
+        bboxes['y_gauss_stdev'] = y_gauss_stdev
+        bboxes['spatial_scores'] = scores
         return self.output(hidden), scores, bboxes
 
 if __name__ == '__main__':

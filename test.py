@@ -1,6 +1,8 @@
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('model')
+parser.add_argument('--bbox-confidence', type=float, default=0.5)
+parser.add_argument('--deviation-confidence', type=float, default=1.5)
 args = parser.parse_args()
 
 import torch
@@ -17,7 +19,7 @@ transforms = v2.Compose([
     v2.ToDtype(torch.float32, True),
 ])
 # we are testing with the train-set itself for now
-ts = data.STL10('/data2/toys', 'train', transforms)
+ts = data.STL10('/data/toys', 'train', transforms)
 ts = torch.utils.data.DataLoader(ts, 1, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
@@ -42,7 +44,12 @@ for x, y in ts:
     for i in range(scores.shape[2]):
         for j in range(scores.shape[3]):
             plt.text(j*16, i*16, f'{scores[0, 0, i, j]*100:02.0f}', va='top')
-    for (x1, y1, x2, y2) in bboxes[0]:
-        plt.gca().add_patch(patches.Rectangle((x1, y1), x2-x1, y2-y1, linewidth=1, edgecolor='r', facecolor='none'))
+    if bboxes != None:
+        # filter those bounding boxes below a certain level of confidence
+        batch_scores = bboxes[f'scores']
+        batch_bboxes = bboxes[f'bboxes_dev{args.deviation_confidence}']
+        bboxes = [[bbox.cpu() for score, bbox in zip(scores, bboxes) if score >= args.bbox_confidence] for scores, bboxes in zip(batch_scores, batch_bboxes)]
+        for (x1, y1, x2, y2) in bboxes[0]:
+            plt.gca().add_patch(patches.Rectangle((x1, y1), x2-x1, y2-y1, linewidth=1, edgecolor='r', facecolor='none'))
     plt.title(f'Y={y[0]} Ŷ={pred[0].cpu()}')
     plt.show()
