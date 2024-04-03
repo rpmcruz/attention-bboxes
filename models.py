@@ -1,4 +1,31 @@
 import torch
+import torchvision
+
+def backbone():
+    '''
+    return torch.nn.Sequential(        # 96x96
+        torch.nn.LazyConv2d(128, 3, 2, 1),  # 48x48
+        torch.nn.LazyConv2d(256, 3, 2, 1),  # 24x24
+        torch.nn.LazyConv2d(512, 3, 2, 1),  # 12x12
+        torch.nn.LazyConv2d(1024, 3, 2, 1), # 6x6
+    )
+    '''
+    backbone = torchvision.models.resnet50()
+    return torch.nn.Sequential(*list(backbone.children())[:-3])
+
+class Baseline(torch.nn.Module):
+    # use_softmax is ignored
+    def __init__(self, num_classes, use_softmax):
+        super().__init__()
+        # image 96x96 ---> grid 6x6
+        self.grid = backbone()
+        self.output = torch.nn.LazyLinear(num_classes)
+
+    def forward(self, images):
+        print('images:', images.min(), images.max(), images.dtype)
+        grid = self.grid(images)
+        hidden = torch.sum(grid, (2, 3))  # global pooling
+        return self.output(hidden), None, None
 
 '''
 (Part 1)
@@ -19,12 +46,7 @@ class BasicGrid(torch.nn.Module):
     def __init__(self, num_classes, use_softmax):
         super().__init__()
         # image 96x96 ---> grid 6x6
-        self.grid = torch.nn.Sequential(        # 96x96
-            torch.nn.LazyConv2d(128, 3, 2, 1),  # 48x48
-            torch.nn.LazyConv2d(256, 3, 2, 1),  # 24x24
-            torch.nn.LazyConv2d(512, 3, 2, 1),  # 12x12
-            torch.nn.LazyConv2d(1024, 3, 2, 1), # 6x6
-        )
+        self.grid = backbone()
         self.scores = torch.nn.LazyConv2d(1, 1)
         self.output = torch.nn.LazyLinear(num_classes)
         self.use_softmax = use_softmax
@@ -141,16 +163,10 @@ def gaussian_pdf(x, avg, stdev):
     return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
 class GaussianGrid(torch.nn.Module):
-    # use_softmax is ignored
     def __init__(self, num_classes, use_softmax):
         super().__init__()
         # image 96x96 ---> grid 6x6
-        self.grid = torch.nn.Sequential(        # 96x96
-            torch.nn.LazyConv2d(128, 3, 2, 1),  # 48x48
-            torch.nn.LazyConv2d(256, 3, 2, 1),  # 24x24
-            torch.nn.LazyConv2d(512, 3, 2, 1),  # 12x12
-            torch.nn.LazyConv2d(1024, 3, 2, 1), # 6x6
-        )
+        self.grid = backbone()
         self.gaussian = torch.nn.LazyConv2d(5, 1)
         self.output = torch.nn.LazyLinear(num_classes)
         self.use_softmax = use_softmax

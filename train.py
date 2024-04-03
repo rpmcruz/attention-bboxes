@@ -36,6 +36,7 @@ model.train()
 for epoch in range(args.epochs):
     tic = time()
     avg_loss = 0
+    avg_acc = 0
     for x, y in tr:
         x = x.to(device)
         y = y.to(device)
@@ -45,13 +46,14 @@ for epoch in range(args.epochs):
             loss += args.penalty1 * bboxes['scores'].mean()
             loss += args.penalty2 * bboxes['x_gauss_stdev'].mean()
             loss += args.penalty2 * bboxes['y_gauss_stdev'].mean()
-        else:
+        elif scores != None:
             loss += args.penalty1 * scores.mean()
         opt.zero_grad()
         loss.backward()
         opt.step()
         avg_loss += float(loss) / len(tr)
+        avg_acc += (y == pred.argmax(1)).float().mean() / len(tr)
     toc = time()
-    print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss}')
+    print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}')
 
 torch.save(model.cpu(), f'model-{args.model}-penalty-{args.penalty1}-{args.penalty2}-usesoftmax-{int(args.use_softmax)}.pth')
