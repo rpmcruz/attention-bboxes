@@ -191,8 +191,8 @@ class GaussianGrid(torch.nn.Module):
         y_prob = gaussian_pdf(yy[None, None], y_gauss_avg[..., None, None], y_gauss_stdev[..., None, None])
         # sum(score_gauss) != 1, therefore this is not actually a weighted average.
         # not sure if torch.sum() is the most appropriate
-        scores = torch.sum(score_gauss[:, :, None, None] * (x_prob*y_prob), 1, True)
-        hidden = torch.sum(scores * grid, [2, 3])
+        spatial_scores = torch.sum(score_gauss[:, :, None, None] * (x_prob*y_prob), 1, True)
+        hidden = torch.sum(spatial_scores * grid, [2, 3])
         # 68.27% of the data falls within 1 stddev of the mean
         # 86.64% of the data falls within 1.5 stddevs of the mean
         # 95.44% of the data falls within 2 stddevs of the mean
@@ -206,13 +206,13 @@ class GaussianGrid(torch.nn.Module):
                 xscale * torch.clamp(x_gauss_avg+n*x_gauss_stdev, max=grid.shape[3]),
                 yscale * torch.clamp(y_gauss_avg+n*y_gauss_stdev, max=grid.shape[2])
             ), 2)
-        bboxes['scores'] = score_gauss
+        bboxes['gauss_scores'] = score_gauss
         bboxes['x_gauss_avg'] = x_gauss_avg
         bboxes['y_gauss_avg'] = y_gauss_avg
         bboxes['x_gauss_stdev'] = x_gauss_stdev
         bboxes['y_gauss_stdev'] = y_gauss_stdev
-        bboxes['spatial_scores'] = scores
-        return self.output(hidden), scores, bboxes
+        bboxes['spatial_scores'] = spatial_scores
+        return self.output(hidden), spatial_scores, bboxes
 
 if __name__ == '__main__':
     m = GaussianGrid(5)

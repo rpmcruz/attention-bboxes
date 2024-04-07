@@ -45,7 +45,7 @@ for epoch in range(args.epochs):
         pred, scores, bboxes = model(x)
         loss = torch.nn.functional.cross_entropy(pred, y)
         if bboxes != None:
-            loss += args.penalty1 * bboxes['scores'].mean()
+            loss += args.penalty1 * bboxes['gauss_scores'].mean()
             loss += args.penalty2 * bboxes['x_gauss_stdev'].mean()
             loss += args.penalty2 * bboxes['y_gauss_stdev'].mean()
         elif scores != None:
