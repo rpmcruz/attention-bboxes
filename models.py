@@ -22,7 +22,6 @@ class Baseline(torch.nn.Module):
         self.output = torch.nn.LazyLinear(num_classes)
 
     def forward(self, images):
-        print('images:', images.min(), images.max(), images.dtype)
         grid = self.grid(images)
         hidden = torch.sum(grid, (2, 3))  # global pooling
         return self.output(hidden), None, None
