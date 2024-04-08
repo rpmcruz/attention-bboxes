@@ -2,6 +2,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset')
 parser.add_argument('model')
+parser.add_argument('output')
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--penalty1', type=float, default=10)
 parser.add_argument('--penalty2', type=float, default=1)
@@ -58,4 +59,4 @@ for epoch in range(args.epochs):
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}')
 
-torch.save(model.cpu(), f'model-{args.dataset}-{args.model}-penalty-{args.penalty1}-{args.penalty2}-usesoftmax-{int(args.use_softmax)}.pth')
+torch.save(model.cpu(), args.output)
