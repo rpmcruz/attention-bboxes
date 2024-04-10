@@ -42,9 +42,8 @@ class AttentionHead(nn.Module):
         self.V = nn.Linear(in_features=512, out_features=256)
 
         # Defining the activation functions
-        self.act_W1 = nn.ReLU()
-        # self.act_Wa = nn.Softmax(dim=1)
-        self.act_Wa = nn.Sigmoid()
+        self.act_W1 = nn.ReLU()        
+        self.act_Wa = nn.Sigmoid() # Maybe it is better to change to ReLU
         self.act_U = nn.Sigmoid()
         self.act_V = nn.Tanh()        
 
@@ -67,14 +66,15 @@ class AttentionHead(nn.Module):
         att = self.act_Wa(att)
         return att, h
 
+    
 class ClusterAttention(nn.Module):
     def __init__(self) -> None:
         super(ClusterAttention, self).__init__()
-        self.cluster = nn.Linear(in_features=512, out_features=1)
-        self.act_cluster = nn.Sigmoid()
+        self.cluster = nn.LazyConv2d(1,(1,512),(1,512))
+        self.act_cluster = nn.Softmax(dim=1)
     
     def forward(self,x):
-        x = self.cluster(x)
+        x = self.cluster(x[None,...])
         return self.act_cluster(x)
 
 class AttModel(nn.Module):
@@ -89,26 +89,21 @@ class AttModel(nn.Module):
         self.attention_head = AttentionHead()
         self.attention_cluster = ClusterAttention()        
 
-        self.rep_cluster = torch.zeros((10,512))
-        self.att_cluster = torch.zeros((10,1))
-        self.box_coords = torch.zeros((10,4))
+        # placeholders for concatanation 
+        self.rep_cluster = []
+        self.att_cluster = []
+        self.box_coords = []
+        self.h = []
+        self.att = []
 
     def forward(self, x):
         x = self.backbone(x)
         feat, coords = feat_organizer(x)
-        feat_clusters = cluster_features(feat, coords, num_clusters=self.n_clusters)
+        att, h = self.attention_head(feat)
+        feat_clusters, proj_clusters = cluster_features(h, att, coords, num_clusters=self.n_clusters)
+        att_clusters = self.attention_cluster(feat_clusters)
+        final_rep = attention_pooling(feat_clusters, atts=att_clusters.view(-1,1))
 
-        for i in range(len(feat_clusters)):
-            feat_aux = feat_clusters[i]['Features']
-            coords_aux = feat_clusters[i]['Projections']
-            coords_aux = torch.tensor(np.array(coords_aux), dtype=torch.float32)
-
-            att, h = self.attention_head(feat_aux)
-            self.box_coords[i,:] = attention_pooling(tiles_vector=coords_aux, atts=nn.functional.softmax(att, dim=0))
-            self.rep_cluster[i,:] = attention_pooling(tiles_vector=h, atts=nn.functional.softmax(att, dim=0))
-            self.att_cluster[i,:] = self.attention_cluster(self.rep_cluster[i,:])            
+        logits = self.classifier(final_rep)
         
-        rep_final = attention_pooling(tiles_vector=self.rep_cluster, atts=nn.functional.softmax(self.att_cluster, dim=0))
-        logits = self.classifier(rep_final)
-        
-        return self.act_class(logits), self.att_cluster, self.box_coords
+        return self.act_class(logits), att_clusters, proj_clusters
