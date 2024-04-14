@@ -78,7 +78,7 @@ def visualize_boxes(img: torch.Tensor, bboxes: torch.Tensor, atts: torch.Tensor,
     atts_np = atts.detach().cpu().numpy()
     atts_str = []
     for aux_att in atts_np:
-        atts_str.append(str(aux_att)[0:5])
+        atts_str.append(str(np.format_float_positional(aux_att))[0:5])
 
     # Plotting colors
     green = (0,255,0)
@@ -100,3 +100,25 @@ def visualize_boxes(img: torch.Tensor, bboxes: torch.Tensor, atts: torch.Tensor,
     plt.show()
     plt.waitforbuttonpress(0)
     plt.close()
+
+def decode_predictions(y: torch.Tensor):
+    if y == 0:
+        return 'Airplane'
+    elif y == 1:
+        return 'Bird'
+    elif y == 2:
+        return 'Car'
+    elif y == 3:
+        return 'Cat'
+    elif y == 4:
+        return 'Deer'
+    elif y == 5:
+        return 'Dog'
+    elif y == 6:
+        return 'Horse'
+    elif y == 7:
+        return 'Monkey'
+    elif y == 8:
+        return 'Ship'
+    else:
+        return 'Truck'
