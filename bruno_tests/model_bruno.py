@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from utils import *
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class AnchorBackbone(nn.Module):
     def __init__(self) -> list:
@@ -19,15 +20,18 @@ class AnchorBackbone(nn.Module):
         self.anchor2 = nn.LazyConv2d(1024,(3,1),1) # 17x15 original
         self.anchor3 = nn.LazyConv2d(1024,(1,3),1) # 15x17 original
 
-    def forward(self, x):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.conv3(x)
+        # Activation of conv layers
+        self.conv_act = nn.ReLU()
 
-        anc0 = self.anchor0(x)
-        anc1 = self.anchor1(x)
-        anc2 = self.anchor2(x)
-        anc3 = self.anchor3(x)
+    def forward(self, x):
+        x = self.conv_act(self.conv1(x))
+        x = self.conv_act(self.conv2(x))
+        x = self.conv_act(self.conv3(x))
+
+        anc0 = self.conv_act(self.anchor0(x))
+        anc1 = self.conv_act(self.anchor1(x))
+        anc2 = self.conv_act(self.anchor2(x))
+        anc3 = self.conv_act(self.anchor3(x))
 
         return [anc0, anc1, anc2, anc3]
 
@@ -67,7 +71,6 @@ class AttentionHead(nn.Module):
         att = self.act_Wa(att)
         return att, h
 
-
 class ClusterAttention(nn.Module):
     def __init__(self) -> None:
         super(ClusterAttention, self).__init__()
@@ -89,13 +92,6 @@ class AttModel(nn.Module):
         self.backbone = AnchorBackbone()
         self.attention_head = AttentionHead()
         self.attention_cluster = ClusterAttention()
-
-        # placeholders for concatanation
-        self.rep_cluster = []
-        self.att_cluster = []
-        self.box_coords = []
-        self.h = []
-        self.att = []
 
     def forward(self, x):
         x = self.backbone(x)
