@@ -45,7 +45,8 @@ for x, mask, y in ts:
         pred, scores, bboxes = model(x)
         pred = pred.argmax(1)
         acc.update(pred, y)
-        pg.update(bboxes['spatial_scores'], mask)
+        if bboxes != None:
+            pg.update(bboxes['spatial_scores'], mask)
     if args.visualize:
         hue = 1-scores
         hue = torch.nn.functional.interpolate(hue, x.shape[-2:], mode='nearest-exact')
@@ -74,4 +75,4 @@ for x, mask, y in ts:
         plt.ylim(0, x.shape[2])
         plt.show()
 
-print('Accuracy:', acc.compute(), 'PointingGame:', pg.compute())
+print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}')
