@@ -53,6 +53,24 @@ class StanfordCars:
             image, mask = self.transform(image, mask)
         return image, mask, label
 
+class StanfordDogs:
+    # http://vision.stanford.edu/aditya86/ImageNetDogs/
+    num_classes = 120
+    def __init__(self, root, split, transform=None):
+        root = os.path.join(root, 'stanford_dogs')
+        l = loadmat(f'{split}_list.mat', simplify_cells=True)
+        self.files = l['file_list']
+        self.labels = l['labels']-1
+
+    def __len__(self):
+        return len(self.files)
+
+    def __getitem__(self, i):
+        fname = self.files[i]
+        label = self.labels[i]
+        image = torchvision.io.read_image(os.path.join(self.root, 'Images', fname))
+        return image, None, label
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
