@@ -10,7 +10,7 @@ def backbone():
         torch.nn.LazyConv2d(1024, 3, 2, 1), # 6x6
     )
     '''
-    backbone = torchvision.models.resnet50()
+    backbone = torchvision.models.resnet50(weights='DEFAULT')
     return torch.nn.Sequential(*list(backbone.children())[:-3])
 
 class Baseline(torch.nn.Module):
