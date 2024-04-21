@@ -24,7 +24,7 @@ transforms = v2.Compose([
 ])
 # we are testing with the train-set itself for now
 ds = getattr(data, args.dataset)
-ts = ds('/data/toys', 'train', transforms)
+ts = ds('/data/toys', 'test', transforms)
 ts = torch.utils.data.DataLoader(ts, 1, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################

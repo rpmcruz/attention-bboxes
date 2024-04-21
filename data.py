@@ -1,5 +1,7 @@
 from scipy.io import loadmat
+import xml.etree.ElementTree as ET
 import torch, torchvision
+import torchvision.tv_tensors
 import os
 
 class Birds:
@@ -29,15 +31,13 @@ class Birds:
 
 class StanfordCars:
     # https://www.kaggle.com/datasets/jessicali9530/stanford-cars-dataset
-    # FIXME: the dataset from kaggle seems completely broken
     num_classes = 196
     def __init__(self, root, split, transform=None):
         root = os.path.join(root, 'stanford_cars')
-        data = loadmat(os.path.join(root, 'cars_annos.mat'), simplify_cells=True)
-        data = data['annotations']
-        self.root = os.path.join(root, f'cars_{split}', f'cars_{split}')
-        split = int(split == 'test')
-        self.data = [d for d in data if d['test'] == split]
+        data = loadmat(os.path.join(root, 'devkit', f'cars_{split}_annos.mat'), simplify_cells=True)
+        self.class_names = list(loadmat(os.path.join(root, 'devkit', 'cars_meta.mat'), simplify_cells=True)['class_names'])
+        self.data = data['annotations']
+        self.root = os.path.join(root, 'cars_train')
         self.transform = transform
 
     def __len__(self):
@@ -45,9 +45,9 @@ class StanfordCars:
 
     def __getitem__(self, i):
         d = self.data[i]
-        image = torchvision.io.read_image(os.path.join(self.root, d['relative_im_path'].split('/')[1][1:]))
-        mask = torch.zeros((image.shape[1], image.shape[2]), dtype=bool)
-        mask[d['bbox_y1']:d['bbox_y2'], d['bbox_x1']:d['bbox_x2']] = True
+        image = torchvision.io.read_image(os.path.join(self.root, d['fname']))
+        mask = torch.zeros(1, image.shape[1], image.shape[2], dtype=bool)
+        mask[0, d['bbox_y1']:d['bbox_y2']+1, d['bbox_x1']:d['bbox_x2']+1] = True
         label = d['class']-1
         if self.transform:
             image, mask = self.transform(image, mask)
@@ -57,10 +57,11 @@ class StanfordDogs:
     # http://vision.stanford.edu/aditya86/ImageNetDogs/
     num_classes = 120
     def __init__(self, root, split, transform=None):
-        root = os.path.join(root, 'stanford_dogs')
-        l = loadmat(f'{split}_list.mat', simplify_cells=True)
+        self.root = os.path.join(root, 'stanford_dogs')
+        l = loadmat(os.path.join(self.root, f'{split}_list.mat'), simplify_cells=True)
         self.files = l['file_list']
         self.labels = l['labels']-1
+        self.transform = transform
 
     def __len__(self):
         return len(self.files)
@@ -69,7 +70,13 @@ class StanfordDogs:
         fname = self.files[i]
         label = self.labels[i]
         image = torchvision.io.read_image(os.path.join(self.root, 'Images', fname))
-        return image, None, label
+        ann = ET.parse(os.path.join(self.root, 'Annotation', fname[:-4]))
+        bndbox = {c.tag: int(c.text) for c in ann.find('.//bndbox')}
+        mask = torch.zeros(1, image.shape[1], image.shape[2], dtype=bool)
+        mask[0, bndbox['ymin']:bndbox['ymax']+1, bndbox['xmin']:bndbox['xmax']+1] = True
+        if self.transform:
+            image, mask = self.transform(image, mask)
+        return image, mask, label
 
 if __name__ == '__main__':
     import argparse
@@ -83,5 +90,7 @@ if __name__ == '__main__':
         plt.imshow(image.permute(1, 2, 0))
         plt.subplot(1, 2, 2)
         plt.imshow(mask[0])
+        if hasattr(ds, 'class_names'):
+            label = ds.class_names[label]
         plt.suptitle(f'Class: {label}')
         plt.show()

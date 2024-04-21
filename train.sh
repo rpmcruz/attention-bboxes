@@ -2,6 +2,8 @@
 
 DATASET=Birds
 EPOCHS=250
+PENALTIES1="0 0.1 1 10"
+PENALTIES2="0 0.0001 0.001"
 
 OUT="model-$DATASET-Baseline.pth"
 if [ ! -f $OUT ]; then
@@ -9,9 +11,8 @@ if [ ! -f $OUT ]; then
     python3 train.py $DATASET Baseline $OUT --epochs $EPOCHS
 fi
 
-PENALTIES="0 0.1 1 100"
-for PENALTY1 in $PENALTIES; do
-for PENALTY2 in $PENALTIES; do
+for PENALTY1 in $PENALTIES1; do
+for PENALTY2 in $PENALTIES2; do
     echo "Train for penalty $PENALTY1 $PENALTY2"
     OUT="model-$DATASET-GaussianGrid-penalty-$PENALTY1-$PENALTY2-usesoftmax-0.pth"
     if [ ! -f $OUT ]; then
