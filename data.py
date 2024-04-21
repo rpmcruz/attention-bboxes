@@ -9,22 +9,26 @@ class Birds:
     num_classes = 200
     def __init__(self, root, split, transform=None):
         self.root = os.path.join(root, 'CUB_200_2011')
-        split = int(split == 'test')
-        which = [int(line.split()[1]) == split for line in open(os.path.join(self.root, 'train_test_split.txt'))]
-        files = [(label, folder, image) for label, folder in enumerate(sorted(os.listdir(os.path.join(self.root, 'images')))) for image in sorted(os.listdir(os.path.join(self.root, 'images', folder)))]
-        assert len(which) == len(files), f'Split information ({len(which)}) differs from true files ({len(files)})'
+        files = open(os.path.join(self.root, 'images.txt'))
+        split = open(os.path.join(self.root, 'train_test_split.txt'))
+        labels = open(os.path.join(self.root, 'image_class_labels.txt'))
+        # I don't know if split=0 is test and split=1 is train but I am assuming
+        # that since split=0 49% and split=1 51%
+        train = int(split == 'train')
+        self.files = [f.split()[1] for f, s in zip(files, split) if int(s.split()[1]) == train]
+        self.labels = [int(l.split()[1])-1 for l in labels]
         self.class_names = [line.split()[1][4:-1] for line in open(os.path.join(self.root, 'classes.txt'))]
-        self.files = [f for w, f in zip(which, files) if w]
         self.transform = transform
 
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, i):
-        label, folder, fname = self.files[i]
-        image = os.path.join(self.root, 'images', folder, fname)
+        fname = self.files[i]
+        label = self.labels[i]
+        image = os.path.join(self.root, 'images', fname)
         image = torchvision.io.read_image(image, torchvision.io.ImageReadMode.RGB)
-        mask = os.path.join(self.root, 'segmentations', folder, fname[:-3] + 'png')
+        mask = os.path.join(self.root, 'segmentations', fname[:-3] + 'png')
         mask = torchvision.tv_tensors.Mask(torchvision.io.read_image(mask, torchvision.io.ImageReadMode.GRAY))
         if self.transform:
             image, mask = self.transform(image, mask)
