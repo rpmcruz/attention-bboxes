@@ -10,9 +10,10 @@ class Birds:
     def __init__(self, root, split, transform=None):
         self.root = os.path.join(root, 'CUB_200_2011')
         split = int(split == 'test')
-        which = [int(line.split()[1]) == split for line in open(os.path.join(self.root, 'train_test_split.txt')).readlines()]
+        which = [int(line.split()[1]) == split for line in open(os.path.join(self.root, 'train_test_split.txt'))]
         files = [(label, folder, image) for label, folder in enumerate(sorted(os.listdir(os.path.join(self.root, 'images')))) for image in sorted(os.listdir(os.path.join(self.root, 'images', folder)))]
         assert len(which) == len(files), f'Split information ({len(which)}) differs from true files ({len(files)})'
+        self.class_names = [line.split()[1][4:-1] for line in open(os.path.join(self.root, 'classes.txt'))]
         self.files = [f for w, f in zip(which, files) if w]
         self.transform = transform
 
@@ -61,6 +62,7 @@ class StanfordDogs:
         l = loadmat(os.path.join(self.root, f'{split}_list.mat'), simplify_cells=True)
         self.files = l['file_list']
         self.labels = l['labels']-1
+        self.class_names = ['-'.join(species.split('-')[1:]) for species in sorted(os.listdir(os.path.join(root, 'stanford_dogs', 'Images')))]
         self.transform = transform
 
     def __len__(self):
@@ -71,9 +73,10 @@ class StanfordDogs:
         label = self.labels[i]
         image = torchvision.io.read_image(os.path.join(self.root, 'Images', fname))
         ann = ET.parse(os.path.join(self.root, 'Annotation', fname[:-4]))
-        bndbox = {c.tag: int(c.text) for c in ann.find('.//bndbox')}
+        bndboxes = [{c.tag: int(c.text) for c in bbox} for bbox in ann.findall('.//bndbox')]
         mask = torch.zeros(1, image.shape[1], image.shape[2], dtype=bool)
-        mask[0, bndbox['ymin']:bndbox['ymax']+1, bndbox['xmin']:bndbox['xmax']+1] = True
+        for bndbox in bndboxes:
+            mask[0, bndbox['ymin']:bndbox['ymax']+1, bndbox['xmin']:bndbox['xmax']+1] = True
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
@@ -91,6 +94,6 @@ if __name__ == '__main__':
         plt.subplot(1, 2, 2)
         plt.imshow(mask[0])
         if hasattr(ds, 'class_names'):
-            label = ds.class_names[label]
-        plt.suptitle(f'Class: {label}')
+            label = f'{ds.class_names[label]} {label}'
+        plt.suptitle(str(label))
         plt.show()
