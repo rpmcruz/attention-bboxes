@@ -1,10 +1,11 @@
 #!/bin/bash
 
-DATASET=Birds
+DATASETS="Birds StanfordCars StanfordDogs"
 EPOCHS=250
 PENALTIES1="0 0.1 1 10"
 PENALTIES2="0 0.0001 0.001"
 
+for DATASET in $DATASETS; do
 OUT="model-$DATASET-Baseline.pth"
 if [ ! -f $OUT ]; then
     echo $OUT
@@ -25,5 +26,6 @@ for PENALTY2 in $PENALTIES2; do
         python3 train.py $DATASET GaussianGrid $OUT --epochs $EPOCHS --penalty1 $PENALTY1 --penalty2 $PENALTY2 --use-softmax &
     fi
     wait
+done
 done
 done
