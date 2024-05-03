@@ -20,7 +20,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 transforms = v2.Compose([
     v2.Resize((224, 224)),
     v2.RandomHorizontalFlip(),
-    v2.ColorJitter(25, 25),
+    v2.ColorJitter(0.2, 0.2),
     v2.ToDtype(torch.float32, True),
 ])
 ds = getattr(data, args.dataset)

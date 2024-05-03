@@ -50,8 +50,8 @@ class StanfordCars:
 
     def __getitem__(self, i):
         d = self.data[i]
-        image = torchvision.io.read_image(os.path.join(self.root, d['fname']))
-        mask = torch.zeros(1, image.shape[1], image.shape[2], dtype=bool)
+        image = torchvision.io.read_image(os.path.join(self.root, d['fname']), torchvision.io.ImageReadMode.RGB)
+        mask = torchvision.tv_tensors.Mask(torch.zeros(1, image.shape[1], image.shape[2], dtype=bool))
         mask[0, d['bbox_y1']:d['bbox_y2']+1, d['bbox_x1']:d['bbox_x2']+1] = True
         label = d['class']-1
         if self.transform:
@@ -75,10 +75,10 @@ class StanfordDogs:
     def __getitem__(self, i):
         fname = self.files[i]
         label = self.labels[i]
-        image = torchvision.io.read_image(os.path.join(self.root, 'Images', fname))
+        image = torchvision.io.read_image(os.path.join(self.root, 'Images', fname), torchvision.io.ImageReadMode.RGB)
         ann = ET.parse(os.path.join(self.root, 'Annotation', fname[:-4]))
         bndboxes = [{c.tag: int(c.text) for c in bbox} for bbox in ann.findall('.//bndbox')]
-        mask = torch.zeros(1, image.shape[1], image.shape[2], dtype=bool)
+        mask = torchvision.tv_tensors.Mask(torch.zeros(1, image.shape[1], image.shape[2], dtype=bool))
         for bndbox in bndboxes:
             mask[0, bndbox['ymin']:bndbox['ymax']+1, bndbox['xmin']:bndbox['xmax']+1] = True
         if self.transform:
