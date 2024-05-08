@@ -31,7 +31,7 @@ tr = torch.utils.data.DataLoader(tr, 32, True, num_workers=4, pin_memory=True)
 
 model = getattr(models, args.model)(ds.num_classes, args.use_softmax)
 model.to(device)
-opt = torch.optim.Adam(model.parameters(), 1e-4)
+opt = torch.optim.Adam(model.parameters())
 
 ############################# LOOP #############################
 

@@ -53,7 +53,8 @@ class StanfordCars:
         image = torchvision.io.read_image(os.path.join(self.root, d['fname']), torchvision.io.ImageReadMode.RGB)
         mask = torchvision.tv_tensors.Mask(torch.zeros(1, image.shape[1], image.shape[2], dtype=bool))
         mask[0, d['bbox_y1']:d['bbox_y2']+1, d['bbox_x1']:d['bbox_x2']+1] = True
-        label = d['class']-1
+        # FIXME: test set does not have class labels
+        label = d.get('class', 1)-1
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label

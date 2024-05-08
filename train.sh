@@ -1,8 +1,8 @@
 #!/bin/bash
 
 DATASETS="Birds StanfordCars StanfordDogs"
-EPOCHS=250
-PENALTIES1="0 0.1 1 10"
+EPOCHS=100
+PENALTIES1="0 0.1 1"
 PENALTIES2="0 0.0001 0.001"
 
 for DATASET in $DATASETS; do
