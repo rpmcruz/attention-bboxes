@@ -1,6 +1,22 @@
 # attention-bboxes
 An in-model xAI technique based on predicting intermediate bounding boxes.
 
+Possible approaches:
+
+* Occlusion
+```
+image ──► encoder ──► bboxes ──► heatmap ──► × ──► classifier
+              │                              ▲               
+              └──────────────────────────────┘               
+```
+
+* Adversarial
+```
+image ──► encoder ─┐► classifier                                         
+                   │                                                     
+                   └► bboxes ──► heatmap ──► × ──► encoder ──► classifier
+```
+
 Preliminary results using BasicGrid (dataset=STL10):
 
 ![Preliminary results](results/basicgrid-1.png)
