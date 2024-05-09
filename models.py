@@ -2,217 +2,170 @@ import torch
 import torchvision
 
 def backbone():
-    '''
-    return torch.nn.Sequential(        # 96x96
-        torch.nn.LazyConv2d(128, 3, 2, 1),  # 48x48
-        torch.nn.LazyConv2d(256, 3, 2, 1),  # 24x24
-        torch.nn.LazyConv2d(512, 3, 2, 1),  # 12x12
-        torch.nn.LazyConv2d(1024, 3, 2, 1), # 6x6
-    )
-    '''
-    backbone = torchvision.models.resnet50(weights='DEFAULT')
-    return torch.nn.Sequential(*list(backbone.children())[:-3])
+    # image 96x96 ---> grid 6x6
+    # sometimes people use [:-2] because they use 224x224 images (7x7 grid)
+    return torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-3])
 
-class Baseline(torch.nn.Module):
-    # use_softmax is ignored
-    def __init__(self, num_classes, use_softmax):
+################################### OBJECT DETECTION MODELS ###################################
+
+class OneStage(torch.nn.Module):
+    def __init__(self, use_softmax_scores):
         super().__init__()
-        # image 96x96 ---> grid 6x6
-        self.grid = backbone()
-        self.output = torch.nn.LazyLinear(num_classes)
+        self.output = torch.nn.Conv2d(2048, 5, 1)
+        self.use_softmax_scores = use_softmax_scores
 
-    def forward(self, images):
-        grid = self.grid(images)
-        hidden = torch.sum(grid, (2, 3))  # global pooling
-        return self.output(hidden), None, None
-
-'''
-(Part 1)
-image      grid     scores (softmax)
-□□□□□       □□□       □□□
-□□□□□  ==>  □□□  ==>  □□□
-□□□□□       □□□       □□□
-□□□□□
-
-(Part 2)
-grid ⊙ scores      (hidden)   output
-    □□□               □
-    □□□         ==>   □   ==>  □
-    □□□               □
-'''
-
-class BasicGrid(torch.nn.Module):
-    def __init__(self, num_classes, use_softmax):
-        super().__init__()
-        # image 96x96 ---> grid 6x6
-        self.grid = backbone()
-        self.scores = torch.nn.LazyConv2d(1, 1)
-        self.output = torch.nn.LazyLinear(num_classes)
-        self.use_softmax = use_softmax
-
-    def forward(self, images):
-        grid = self.grid(images)
-        scores = self.scores(grid)
-        # temporarily flatten scores matrix because pytorch softmax can only be
-        # done across one single dimension
-        if self.use_softmax:
-            scores = torch.softmax(torch.flatten(scores, 2), 2).view(*scores.shape)
+    def forward(self, grid):
+        device = grid.device
+        bboxes = self.output(grid)
+        # bboxes center
+        xx, yy = torch.meshgrid(torch.arange(grid.shape[3], device=device), torch.arange(grid.shape[2], device=device), indexing='xy')
+        cx = torch.flatten(torch.sigmoid(bboxes[:, 0]) + xx, 1)
+        cy = torch.flatten(torch.sigmoid(bboxes[:, 1]) + yy, 1)
+        # bboxes size
+        size_act = torch.nn.functional.softplus  # or torch.exp()?
+        bw = torch.flatten(size_act(bboxes[:, 2]), 1)
+        bh = torch.flatten(size_act(bboxes[:, 3]), 1)
+        # bboxes score
+        if self.use_softmax_scores:
+            scores = torch.softmax(torch.flatten(bboxes[:, 4], 1), 1)
         else:
-            scores = torch.sigmoid(scores)
-        hidden = torch.sum(grid * scores, (2, 3))
-        return self.output(hidden), scores, None
+            scores = torch.sigmoid(torch.flatten(bboxes[:, 4], 1))
+        return torch.stack((cx, cy, bw, bh, scores), 1)
 
-'''
-(Part 1)
-image      grid bboxes (cx,cy,log(w),log(h),score)
-□□□□□       □□□
-□□□□□  ==>  □□□
-□□□□□       □□□
-□□□□□
+class FCOS(torch.nn.Module):
+    # https://arxiv.org/abs/1904.01355
+    def __init__(self):
+        super().__init__()
+        backbone = torchvision.models.resnet50(weights='DEFAULT')
+        backbone = list(backbone.children())[:-2]
+        self.backbone = torch.nn.Sequential(*backbone[:-3])
+        # C3, C4, C5 = the last 3 layers of the backbone
+        # P3 = conv(C3, 1x1) + upsample(P4, 2)
+        # P4 = conv(C4, 1x1) + upsample(P5, 2)
+        # P5 = conv(C5, 1x1)
+        # P6 = conv(P5, 1x1, stride=2)
+        # P7 = conv(P6, 1x1, stride=2)
+        self.C3 = backbone[-3]
+        self.C4 = backbone[-2]
+        self.C5 = backbone[-1]
+        self.P3 = torch.nn.Conv2d(512, 256, 1)
+        self.P4 = torch.nn.Conv2d(1024, 256, 1)
+        self.P5 = torch.nn.Conv2d(2048, 256, 1)
+        self.P6 = torch.nn.Conv2d(256, 256, 1, stride=2)
+        self.P7 = torch.nn.Conv2d(256, 256, 1, stride=2)
+        # head is shared across feature levels
+        # we use class_head as our score_head
+        self.class_head = torch.nn.Sequential(
+            torch.nn.Conv2d(256, 256, 3, padding=1),
+            torch.nn.Conv2d(256, 256, 3, padding=1),
+            torch.nn.Conv2d(256, 256, 3, padding=1),
+            torch.nn.Conv2d(256, 256, 3, padding=1),
+            torch.nn.Conv2d(256, 1, 3, padding=1),
+        )
+        self.reg_head = torch.nn.Sequential(
+            torch.nn.Conv2d(256, 256, 3, padding=1),
+            torch.nn.Conv2d(256, 256, 3, padding=1),
+            torch.nn.Conv2d(256, 256, 3, padding=1),
+            torch.nn.Conv2d(256, 256, 3, padding=1),
+            torch.nn.Conv2d(256, 4, 3, padding=1),
+        )
+        # instead of exp(x), use exp(s_ix) with a trainable scalar s_i for each P_i
+        self.s = torch.nn.parameter.Parameter(torch.ones([5]))
 
-(Part 2)
-image      extract bboxes     latent
-□□□□□       □ □ □             □ □ □
-□□□□□  ==>  □ □ □        ==>  □ □ □
-□□□□□       □ □ □             □ □ □
-□□□□□
+    def forward(self, x):
+        C2 = self.backbone(x)
+        C3 = self.C3(C2)
+        C4 = self.C4(C3)
+        C5 = self.C5(C4)
+        upsample = torch.nn.functional.interpolate
+        P5 = self.P5(C5)
+        P6 = self.P6(P5)
+        P7 = self.P7(P6)
+        P4 = self.P4(C4) + upsample(P5, scale_factor=2, mode='nearest-exact')
+        P3 = self.P3(C3) + upsample(P4, scale_factor=2, mode='nearest-exact')
+        return (self.class_head(P3), torch.exp(self.s[0]*self.reg_head(P3))), \
+            (self.class_head(P4), torch.exp(self.s[1]*self.reg_head(P4))), \
+            (self.class_head(P5), torch.exp(self.s[2]*self.reg_head(P5))), \
+            (self.class_head(P6), torch.exp(self.s[3]*self.reg_head(P6))), \
+            (self.class_head(P7), torch.exp(self.s[4]*self.reg_head(P7)))
 
-(Part 3)
-latent ⊙ scores    (hidden)   output
-    □□□               □
-    □□□         ==>   □   ==>  □
-    □□□               □
-'''
+class DETR(torch.nn.Module):
+    # https://github.com/facebookresearch/detr
+    def __init__(self, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+        super().__init__()
+        self.backbone = torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-2])
+        self.conv = torch.nn.Conv2d(2048, hidden_dim, 1)
+        self.transformer = torch.nn.Transformer(hidden_dim, nheads,
+        num_encoder_layers, num_decoder_layers)
+        self.linear_bbox = torch.nn.Linear(hidden_dim, 4)
+        self.query_pos = torch.nn.Parameter(torch.rand(100, hidden_dim))
+        self.row_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
+        self.col_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
 
-def extract_roi(images, bboxes, region_size):
-    bboxes = bboxes.int()
-    regions = torch.zeros((bboxes.shape[0], 3, bboxes.shape[2], bboxes.shape[3]))
-    for i, (image, image_bboxes) in enumerate(zip(images, bboxes)):
-        for j, bbox in enumerate(image_bboxes):
-            region = image[:, bbox[0]:bbox[2], bbox[1]:bbox[3]]
-            region = torch.nn.functional.interpolate(region, region_size)
-            regions[i, j] = region
-    return regions
+    def forward(self, x):
+        h = self.conv(x)
+        H, W = h.shape[-2:]
+        pos = torch.cat([
+            self.col_embed[:W].unsqueeze(0).repeat(H, 1, 1),
+            self.row_embed[:H].unsqueeze(1).repeat(1, W, 1),
+        ], dim=-1).flatten(0, 1).unsqueeze(1)
+        h = self.transformer(pos + h.flatten(2).permute(2, 0, 1),
+        self.query_pos.unsqueeze(1))
+        return torch.sigmoid(self.linear_bbox(h))
 
-class BboxGrid(torch.nn.Module):
+########################################## PROPOSALS ##########################################
+
+class Classifier(torch.nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        # image 96x96 ---> grid 6x6
-        self.grid = torch.nn.Sequential(        # 96x96
-            torch.nn.LazyConv2d(128, 3, 2, 1),  # 48x48
-            torch.nn.LazyConv2d(256, 3, 2, 1),  # 24x24
-            torch.nn.LazyConv2d(512, 3, 2, 1),  # 12x12
-            torch.nn.LazyConv2d(5, 3, 2, 1),    # 6x6
-        )
-        # region 12x12 ---> latent 256
-        self.regions = torch.nn.Sequential(     # 12x12
-            torch.nn.LazyConv2d(128, 3, 2, 1),  # 6x6
-            torch.nn.LazyConv2d(256, 3, 2, 1),  # 3x3
-        )
-        self.output = torch.nn.LazyLinear(num_classes)
+        self.output = torch.nn.Linear(2048, num_classes)
+
+    def forward(self, x):
+        x = torch.sum(x, (2, 3))  # global pooling
+        return self.output(x)
+
+class Baseline(torch.nn.Module):
+    def __init__(self, backbone, classifier):
+        super().__init__()
+        self.backbone = backbone
+        self.classifier = classifier
+
+    def forward(self, x):
+        return self.classifier(self.backbone(x))
+
+class HeatmapAttention(torch.nn.Module):
+    def __init__(self, backbone, object_detection, bboxes2heatmap, classifier):
+        self.backbone = backbone
+        self.object_detection = object_detection
+        self.bboxes2heatmap = bboxes2heatmap
+        self.classifier = classifier
 
     def forward(self, images):
-        grid = self.grid(images)
-        # grid is (cy, cx, h, w, scores)
-        rr, cc = torch.meshgrid(torch.arange(grid.shape[2], device=images.device), torch.arange(grid.shape[3], device=images.device), indexing='ij')
-        centers_rescale = (torch.tensor(images.shape[[2, 3]])/torch.tensor(grid.shape[[2, 3]]))[None, :, None, None]
-        sizes_rescale = torch.tensor(images.shape[[2, 3]])[None, :, None, None]
-        centers = centers_rescale * (torch.sigmoid(grid[:, 0:2]) + torch.stack((rr, cc))[None, :, None, None])
-        sizes = sizes_rescale * torch.sigmoid(grid[:, 2:4])
-        # our bboxes are (y1, x1, y2, x2)
-        bboxes = torch.cat((centers-sizes/2, centers+sizes/2), 1)
-        bboxes[:, [0, 1]] = torch.clamp(bboxes[:, [0, 1]], min=0)
-        bboxes[:, 2] = torch.clamp(bboxes[:, 2], max=images.shape[2]-1)
-        bboxes[:, 3] = torch.clamp(bboxes[:, 3], max=images.shape[3]-1)
-        scores = grid[:, [4]]
-        # temporarily flatten scores matrix because pytorch softmax can only be
-        # done across one single dimension
-        scores = torch.softmax(torch.flatten(scores, 2), 2).view(*scores.shape)
-        # extract bounding boxes
-        regions = extract_roi(images, bboxes, (12, 12))
-        # another cnn on each region
-        latent = self.regions(regions)
-        # attention
-        hidden = torch.sum(latent * scores, (2, 3))
-        return self.output(hidden), scores, None
-
-'''
-(Part 1)
-image      grid latent    gaussian (cx,cy,log(varx),log(vary))
-□□□□□       □□□             □□□
-□□□□□  ==>  □□□       =>    □□□
-□□□□□       □□□             □□□
-□□□□□
-
-(Part 2)
-grid gaussian      pdf gaussian
-    □□□               □□□
-    □□□         ==>   □□□
-    □□□               □□□
-
-(Part 3)
-latent ⊙ pdf      (hidden)   output
-    □□□               □
-    □□□         ==>   □   ==>  □
-    □□□               □
-'''
+        embed = self.backbone(images)
+        bboxes = self.object_detection(embed)
+        embed = self.bboxes2heatmap(embed, bboxes)
+        return self.classifier(embed)
 
 def gaussian_pdf(x, avg, stdev):
     sqrt2pi = 2.5066282746310002
     return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
-class GaussianGrid(torch.nn.Module):
-    def __init__(self, num_classes, use_softmax):
-        super().__init__()
-        # image 96x96 ---> grid 6x6
-        self.grid = backbone()
-        self.gaussian = torch.nn.LazyConv2d(5, 1)
-        self.output = torch.nn.LazyLinear(num_classes)
-        self.use_softmax = use_softmax
+def gauss_bboxes(self, embed, bboxes):
+    eps = 0.01
+    device = embed.device
+    xx, yy = torch.meshgrid(torch.arange(embed.shape[3], device=device), torch.arange(embed.shape[2], device=device), indexing='xy')
+    x_prob = gaussian_pdf(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None]+eps)
+    y_prob = gaussian_pdf(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None]+eps)
+    spatial_scores = torch.sum(bboxes[:, 4][:, :, None, None] * (x_prob*y_prob), 1, True)
+    return torch.sum(spatial_scores * embed, [2, 3])
 
-    def forward(self, images):
-        grid = self.grid(images)
-        gauss = self.gaussian(grid)
-        xx, yy = torch.meshgrid(torch.arange(grid.shape[3], device=images.device), torch.arange(grid.shape[2], device=images.device), indexing='xy')
-        x_gauss_avg = torch.flatten(torch.sigmoid(gauss[:, 0]) + xx, 1)
-        y_gauss_avg = torch.flatten(torch.sigmoid(gauss[:, 1]) + yy, 1)
-        # if stdev is too small, the pdf explodes. therefore we use an epsilon
-        # (minimum) of stdev_epsilon.
-        stdev_act = torch.nn.functional.softplus  # or torch.exp()?
-        stdev_epsilon = 0.01
-        x_gauss_stdev = torch.flatten(stdev_act(gauss[:, 2]), 1) + stdev_epsilon
-        y_gauss_stdev = torch.flatten(stdev_act(gauss[:, 3]), 1) + stdev_epsilon
-        if self.use_softmax:
-            score_gauss = torch.softmax(torch.flatten(gauss[:, 4], 1), 1)
-        else:
-            score_gauss = torch.sigmoid(torch.flatten(gauss[:, 4], 1))
-        x_prob = gaussian_pdf(xx[None, None], x_gauss_avg[..., None, None], x_gauss_stdev[..., None, None])
-        y_prob = gaussian_pdf(yy[None, None], y_gauss_avg[..., None, None], y_gauss_stdev[..., None, None])
-        # sum(score_gauss) != 1, therefore this is not actually a weighted average.
-        # not sure if torch.sum() is the most appropriate
-        spatial_scores = torch.sum(score_gauss[:, :, None, None] * (x_prob*y_prob), 1, True)
-        hidden = torch.sum(spatial_scores * grid, [2, 3])
-        # 68.27% of the data falls within 1 stddev of the mean
-        # 86.64% of the data falls within 1.5 stddevs of the mean
-        # 95.44% of the data falls within 2 stddevs of the mean
-        xscale = images.shape[3] / grid.shape[3]
-        yscale = images.shape[2] / grid.shape[2]
-        bboxes = {}
-        for n in [1, 1.5, 2]:
-            bboxes[f'bboxes_dev{n}'] = torch.stack((
-                xscale * torch.clamp(x_gauss_avg-n*x_gauss_stdev, min=0),
-                yscale * torch.clamp(y_gauss_avg-n*y_gauss_stdev, min=0),
-                xscale * torch.clamp(x_gauss_avg+n*x_gauss_stdev, max=grid.shape[3]),
-                yscale * torch.clamp(y_gauss_avg+n*y_gauss_stdev, max=grid.shape[2])
-            ), 2)
-        bboxes['gauss_scores'] = score_gauss
-        bboxes['x_gauss_avg'] = x_gauss_avg
-        bboxes['y_gauss_avg'] = y_gauss_avg
-        bboxes['x_gauss_stdev'] = x_gauss_stdev
-        bboxes['y_gauss_stdev'] = y_gauss_stdev
-        bboxes['spatial_scores'] = spatial_scores
-        return self.output(hidden), spatial_scores, bboxes
-
-if __name__ == '__main__':
-    m = GaussianGrid(5)
-    out = m(torch.zeros(5, 3, 256, 256))
+def gauss_bboxes_to_real(bboxes, nstdev):
+    # 68.27% of the data falls within 1 stddev of the mean
+    # 86.64% of the data falls within 1.5 stddevs of the mean
+    # 95.44% of the data falls within 2 stddevs of the mean
+    return (
+        torch.clamp(bboxes[:, 0]-nstdev*bboxes[:, 2], min=0),
+        torch.clamp(bboxes[:, 1]-nstdev*bboxes[:, 3], min=0),
+        torch.clamp(bboxes[:, 0]+nstdev*bboxes[:, 2], max=1),
+        torch.clamp(bboxes[:, 1]+nstdev*bboxes[:, 3], max=1)
+    )
