@@ -1,34 +1,32 @@
 import torch
 import torchvision
 
-############################### OBJECT DETECTION MODELS ###############################
+####################### OBJ DETECT MODELS #######################
 
 class OneStage(torch.nn.Module):
-    def __init__(self, use_softmax_scores=True):
+    def __init__(self):
         super().__init__()
-        self.output = torch.nn.LazyConv2d(5, 1)
-        self.use_softmax_scores = use_softmax_scores
+        self.bboxes = torch.nn.LazyConv2d(4, 1)
+        self.scores = torch.nn.LazyConv2d(1, 1)
 
     def forward(self, grid):
+        bboxes, scores = self.output(grid)
+        bboxes = torch.sigmoid(bboxes)
+        scores = torch.sigmoid(scores)
+        # center x/y move to relative coordinates
         device = grid.device
-        bboxes = self.output(grid)
-        # bboxes center
-        xx, yy = torch.meshgrid(torch.arange(grid.shape[3], device=device), torch.arange(grid.shape[2], device=device), indexing='xy')
-        cx = torch.flatten(torch.sigmoid(bboxes[:, 0]) + xx, 1)
-        cy = torch.flatten(torch.sigmoid(bboxes[:, 1]) + yy, 1)
-        # bboxes size
-        size_act = torch.nn.functional.softplus  # or torch.exp()?
-        bw = torch.flatten(size_act(bboxes[:, 2]), 1)
-        bh = torch.flatten(size_act(bboxes[:, 3]), 1)
-        # bboxes score
-        if self.use_softmax_scores:
-            scores = torch.softmax(torch.flatten(bboxes[:, 4], 1), 1)
-        else:
-            scores = torch.sigmoid(torch.flatten(bboxes[:, 4], 1))
-        return torch.stack((cx, cy, bw, bh, scores), 1)
+        xstep = 1/grid.shape[3]
+        ystep = 1/grid.shape[2]
+        xx = torch.arange(0, 1, xstep, device=device)
+        yy = torch.arange(0, 1, ystep, device=device)
+        xx, yy = torch.meshgrid(xx, yy, indexing='xy')
+        bboxes[:, 0] = xx + bboxes[:, 0]/xstep
+        bboxes[:, 1] = yy + bboxes[:, 1]/ystep
+        return torch.flatten(bboxes, 1), torch.flatten(scores, 1)
 
 class FCOS(torch.nn.Module):
     # https://arxiv.org/abs/1904.01355
+    # TODO: this model still needs to be adapted
     def __init__(self):
         super().__init__()
         backbone = torchvision.models.resnet50(weights='DEFAULT')
@@ -90,7 +88,7 @@ class DETR(torch.nn.Module):
         super().__init__()
         self.conv = torch.nn.LazyConv2d(hidden_dim, 1)
         self.transformer = torch.nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, batch_first=True)
-        self.linear_bbox = torch.nn.Linear(hidden_dim, 4)
+        self.linear_bboxes = torch.nn.Linear(hidden_dim, 4)
         self.query_pos = torch.nn.Parameter(torch.rand(100, hidden_dim))
         self.row_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
         self.col_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
@@ -98,16 +96,15 @@ class DETR(torch.nn.Module):
     def forward(self, x):
         h = self.conv(x)
         N, _, H, W = h.shape
-        # H: 25 W: 38
-        # pos: torch.Size([950, 1, 256]) h.flatten(2).permute(2, 0, 1): torch.Size([950, 1, 256])
         pos = torch.cat([
             self.col_embed[None, :W].repeat(H, 1, 1),
             self.row_embed[:H, None].repeat(1, W, 1),
         ], -1).flatten(0, 1)[None]
         h = self.transformer(pos + h.flatten(2).permute(0, 2, 1), self.query_pos[None].repeat(N, 1, 1))
-        return self.linear_bbox(h).sigmoid()
+        bboxes = torch.sigmoid(self.linear_bboxes(h))
+        return bboxes, None
 
-######################################## GLUE ########################################
+############################# GLUE #############################
 
 class Model(torch.nn.Module):
     def __init__(self, backbone, classifier, object_detection=None, bboxes2heatmap=None):
@@ -121,9 +118,11 @@ class Model(torch.nn.Module):
         embed = self.backbone(images)
         heatmap = bboxes = None
         if self.object_detection is not None:
-            bboxes = self.object_detection(embed)
-            heatmap = self.bboxes2heatmap(embed, bboxes)
+            bboxes, scores = self.object_detection(embed)
+            heatmap = self.bboxes2heatmap(embed.shape[2:], bboxes, scores)
             embed = heatmap * embed
+            if scores != None:
+                bboxes = [bb[ss >= 0.5] for bb, ss in zip(bboxes, scores)]
         return self.classifier(embed), heatmap, bboxes
 
 def Backbone():
@@ -140,27 +139,34 @@ class Classifier(torch.nn.Module):
         x = torch.sum(x, (2, 3))  # global pooling
         return self.output(x)
 
-##################################### PROPOSALS #####################################
+########################### PROPOSALS ###########################
 
-def gaussian_pdf(x, avg, stdev):
-    sqrt2pi = 2.5066282746310002
-    return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
+class Heatmap(torch.nn.Module):
+    def forward(self, output_shape, bboxes, scores):
+        device = bboxes.device
+        xstep = 1/output_shape[1]
+        ystep = 1/output_shape[0]
+        xx = torch.arange(0, 1, xstep, device=device)
+        yy = torch.arange(0, 1, ystep, device=device)
+        xx, yy = torch.meshgrid(xx, yy, indexing='xy')
+        xprob = self.f(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None])
+        yprob = self.f(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None])
+        if scores is None:
+            return torch.mean(xprob*yprob, 1, True)
+        return torch.sum(scores[..., None, None]*xprob*yprob, 1, True)
 
-class GaussHeatmap(torch.nn.Module):
-    def forward(self, embed, bboxes, eps=0.01):
-        device = embed.device
-        xx, yy = torch.meshgrid(torch.arange(embed.shape[3], device=device), torch.arange(embed.shape[2], device=device), indexing='xy')
-        x_prob = gaussian_pdf(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None]+eps)
-        y_prob = gaussian_pdf(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None]+eps)
-        return torch.sum(bboxes[:, 4][:, :, None, None] * (x_prob*y_prob), 1, True)
+class GaussHeatmap(Heatmap):
+    def f(self, x, avg, stdev):
+        stdev_eps = 0.01
+        stdev = stdev + stdev_eps
+        sqrt2pi = 2.5066282746310002
+        return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
-def gauss_bboxes_to_real(bboxes, nstdev):
-    # 68.27% of the data falls within 1 stddev of the mean
-    # 86.64% of the data falls within 1.5 stddevs of the mean
-    # 95.44% of the data falls within 2 stddevs of the mean
-    return (
-        torch.clamp(bboxes[:, 0]-nstdev*bboxes[:, 2], min=0),
-        torch.clamp(bboxes[:, 1]-nstdev*bboxes[:, 3], min=0),
-        torch.clamp(bboxes[:, 0]+nstdev*bboxes[:, 2], max=1),
-        torch.clamp(bboxes[:, 1]+nstdev*bboxes[:, 3], max=1)
-    )
+class LogisticHeatmap(Heatmap):
+    def f(self, x, center, size):
+        k = 1
+        x0 = center-size/2
+        x1 = center+size/2
+        logistic0 = 1/(1+torch.exp(-k*(x-x0)))
+        logistic1 = 1 - 1/(1+torch.exp(-k*(x-x1)))
+        return logistic0 + logistic1

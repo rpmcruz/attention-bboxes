@@ -5,7 +5,11 @@ parser.add_argument('output')
 parser.add_argument('--detection', choices=['OneStage', 'FCOS', 'DETR'])
 parser.add_argument('--heatmap', choices=['GaussHeatmap'])
 parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--penalty', type=float, default=0)
+parser.add_argument('--nstdev', type=float, default=1)
+parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
+assert (args.detection == None) == (args.heatmap == None), 'Must enable both or neither detection/heatmap'
 
 import torch
 from torchvision.transforms import v2
@@ -45,14 +49,10 @@ for epoch in range(args.epochs):
     for x, _, y in tr:
         x = x.to(device)
         y = y.to(device)
-        pred, scores, bboxes = model(x)
+        pred, heatmap, bboxes = model(x)
         loss = torch.nn.functional.cross_entropy(pred, y)
-        #if bboxes != None:
-        #    loss += args.penalty1 * bboxes['gauss_scores'].mean()
-        #    loss += args.penalty2 * bboxes['x_gauss_stdev'].mean()
-        #    loss += args.penalty2 * bboxes['y_gauss_stdev'].mean()
-        #elif scores != None:
-        #    loss += args.penalty1 * scores.mean()
+        if heatmap != None:
+            loss += args.penalty * heatmap.mean()
         opt.zero_grad()
         loss.backward()
         opt.step()
@@ -60,5 +60,20 @@ for epoch in range(args.epochs):
         avg_acc += (y == pred.argmax(1)).float().mean() / len(tr)
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}')
+    if args.debug:
+        import matplotlib.pyplot as plt
+        from matplotlib import patches
+        plt.imshow(x[0].cpu().permute(1, 2, 0))
+        bboxes = bboxes[0].cpu().detach()
+        # 68.27% of the data falls within 1 stddev of the mean
+        # 86.64% of the data falls within 1.5 stddevs of the mean
+        # 95.44% of the data falls within 2 stddevs of the mean
+        bx = (bboxes[0]-bboxes[2]/2)*x.shape[3]
+        by = (bboxes[1]-bboxes[2]/2)*x.shape[2]
+        bw = bboxes[2]*x.shape[3]*args.nstdev
+        bh = bboxes[3]*x.shape[2]*args.nstdev
+        for x, y, w, h in zip(bx, by, bw, bh):
+            plt.gca().add_patch(patches.Rectangle((x, y), w, h, linewidth=1, edgecolor='r', facecolor='none'))
+        plt.show()
 
 torch.save(model.cpu(), args.output)
