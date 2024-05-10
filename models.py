@@ -2,6 +2,7 @@ import torch
 import torchvision
 
 ####################### OBJ DETECT MODELS #######################
+# the bounding boxes are of the type xyxy (normalized 0-1)
 
 class OneStage(torch.nn.Module):
     def __init__(self):
@@ -20,8 +21,14 @@ class OneStage(torch.nn.Module):
         xx = torch.arange(0, 1, xstep, device=device)
         yy = torch.arange(0, 1, ystep, device=device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
-        bboxes[:, 0] = xx + bboxes[:, 0]/xstep
-        bboxes[:, 1] = yy + bboxes[:, 1]/ystep
+        # it predictes the center x/y and size. we then convert
+        # to xyxy
+        cx = xx + bboxes[:, 0]*xstep
+        cy = xx + bboxes[:, 1]*ystep
+        bboxes[:, 0] = cx - bboxes[:, 2]/2
+        bboxes[:, 1] = cy - bboxes[:, 3]/2
+        bboxes[:, 2] = cx + bboxes[:, 2]/2
+        bboxes[:, 3] = cy + bboxes[:, 3]/2
         return torch.flatten(bboxes, 1), torch.flatten(scores, 1)
 
 class FCOS(torch.nn.Module):
@@ -102,6 +109,7 @@ class DETR(torch.nn.Module):
         ], -1).flatten(0, 1)[None]
         h = self.transformer(pos + h.flatten(2).permute(0, 2, 1), self.query_pos[None].repeat(N, 1, 1))
         bboxes = torch.sigmoid(self.linear_bboxes(h))
+        # assume it predicts directly xyxy
         return bboxes, None
 
 ############################# GLUE #############################
@@ -149,6 +157,7 @@ class Heatmap(torch.nn.Module):
         xx = torch.arange(0, 1, xstep, device=device)
         yy = torch.arange(0, 1, ystep, device=device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
+        # FIXME: we are now predicting xyxy. this is assuming cx,cy,bw,bh
         xprob = self.f(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None])
         yprob = self.f(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None])
         if scores is None:
@@ -156,17 +165,16 @@ class Heatmap(torch.nn.Module):
         return torch.sum(scores[..., None, None]*xprob*yprob, 1, True)
 
 class GaussHeatmap(Heatmap):
-    def f(self, x, avg, stdev):
+    def f(self, x, x1, x2):
         stdev_eps = 0.01
-        stdev = stdev + stdev_eps
+        avg = (x1+x2)/2
+        stdev = torch.amax(x2-x1, x1-x2) + stdev_eps
         sqrt2pi = 2.5066282746310002
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
 class LogisticHeatmap(Heatmap):
-    def f(self, x, center, size):
+    def f(self, x, x1, x2):
         k = 1
-        x0 = center-size/2
-        x1 = center+size/2
-        logistic0 = 1/(1+torch.exp(-k*(x-x0)))
-        logistic1 = 1 - 1/(1+torch.exp(-k*(x-x1)))
+        logistic0 = 1/(1+torch.exp(-k*(x-x1)))
+        logistic1 = 1 - 1/(1+torch.exp(-k*(x-x2)))
         return logistic0 + logistic1
