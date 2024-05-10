@@ -1,17 +1,12 @@
 import torch
 import torchvision
 
-def backbone():
-    # image 96x96 ---> grid 6x6
-    # sometimes people use [:-2] because they use 224x224 images (7x7 grid)
-    return torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-3])
-
-################################### OBJECT DETECTION MODELS ###################################
+############################### OBJECT DETECTION MODELS ###############################
 
 class OneStage(torch.nn.Module):
-    def __init__(self, use_softmax_scores):
+    def __init__(self, use_softmax_scores=True):
         super().__init__()
-        self.output = torch.nn.Conv2d(2048, 5, 1)
+        self.output = torch.nn.LazyConv2d(5, 1)
         self.use_softmax_scores = use_softmax_scores
 
     def forward(self, grid):
@@ -93,10 +88,8 @@ class DETR(torch.nn.Module):
     # https://github.com/facebookresearch/detr
     def __init__(self, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
         super().__init__()
-        self.backbone = torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-2])
-        self.conv = torch.nn.Conv2d(2048, hidden_dim, 1)
-        self.transformer = torch.nn.Transformer(hidden_dim, nheads,
-        num_encoder_layers, num_decoder_layers)
+        self.conv = torch.nn.LazyConv2d(hidden_dim, 1)
+        self.transformer = torch.nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, batch_first=True)
         self.linear_bbox = torch.nn.Linear(hidden_dim, 4)
         self.query_pos = torch.nn.Parameter(torch.rand(100, hidden_dim))
         self.row_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
@@ -104,37 +97,21 @@ class DETR(torch.nn.Module):
 
     def forward(self, x):
         h = self.conv(x)
-        H, W = h.shape[-2:]
+        N, _, H, W = h.shape
+        # H: 25 W: 38
+        # pos: torch.Size([950, 1, 256]) h.flatten(2).permute(2, 0, 1): torch.Size([950, 1, 256])
         pos = torch.cat([
-            self.col_embed[:W].unsqueeze(0).repeat(H, 1, 1),
-            self.row_embed[:H].unsqueeze(1).repeat(1, W, 1),
-        ], dim=-1).flatten(0, 1).unsqueeze(1)
-        h = self.transformer(pos + h.flatten(2).permute(2, 0, 1),
-        self.query_pos.unsqueeze(1))
-        return torch.sigmoid(self.linear_bbox(h))
+            self.col_embed[None, :W].repeat(H, 1, 1),
+            self.row_embed[:H, None].repeat(1, W, 1),
+        ], -1).flatten(0, 1)[None]
+        h = self.transformer(pos + h.flatten(2).permute(0, 2, 1), self.query_pos[None].repeat(N, 1, 1))
+        return self.linear_bbox(h).sigmoid()
 
-########################################## PROPOSALS ##########################################
+######################################## GLUE ########################################
 
-class Classifier(torch.nn.Module):
-    def __init__(self, num_classes):
+class Model(torch.nn.Module):
+    def __init__(self, backbone, classifier, object_detection=None, bboxes2heatmap=None):
         super().__init__()
-        self.output = torch.nn.Linear(2048, num_classes)
-
-    def forward(self, x):
-        x = torch.sum(x, (2, 3))  # global pooling
-        return self.output(x)
-
-class Baseline(torch.nn.Module):
-    def __init__(self, backbone, classifier):
-        super().__init__()
-        self.backbone = backbone
-        self.classifier = classifier
-
-    def forward(self, x):
-        return self.classifier(self.backbone(x))
-
-class HeatmapAttention(torch.nn.Module):
-    def __init__(self, backbone, object_detection, bboxes2heatmap, classifier):
         self.backbone = backbone
         self.object_detection = object_detection
         self.bboxes2heatmap = bboxes2heatmap
@@ -142,22 +119,40 @@ class HeatmapAttention(torch.nn.Module):
 
     def forward(self, images):
         embed = self.backbone(images)
-        bboxes = self.object_detection(embed)
-        embed = self.bboxes2heatmap(embed, bboxes)
-        return self.classifier(embed)
+        heatmap = bboxes = None
+        if self.object_detection is not None:
+            bboxes = self.object_detection(embed)
+            heatmap = self.bboxes2heatmap(embed, bboxes)
+            embed = heatmap * embed
+        return self.classifier(embed), heatmap, bboxes
+
+def Backbone():
+    # image 96x96 ---> grid 6x6
+    # sometimes people use [:-2] because they use 224x224 images (7x7 grid)
+    return torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-3])
+
+class Classifier(torch.nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.output = torch.nn.LazyLinear(num_classes)
+
+    def forward(self, x):
+        x = torch.sum(x, (2, 3))  # global pooling
+        return self.output(x)
+
+##################################### PROPOSALS #####################################
 
 def gaussian_pdf(x, avg, stdev):
     sqrt2pi = 2.5066282746310002
     return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
-def gauss_bboxes(self, embed, bboxes):
-    eps = 0.01
-    device = embed.device
-    xx, yy = torch.meshgrid(torch.arange(embed.shape[3], device=device), torch.arange(embed.shape[2], device=device), indexing='xy')
-    x_prob = gaussian_pdf(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None]+eps)
-    y_prob = gaussian_pdf(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None]+eps)
-    spatial_scores = torch.sum(bboxes[:, 4][:, :, None, None] * (x_prob*y_prob), 1, True)
-    return torch.sum(spatial_scores * embed, [2, 3])
+class GaussHeatmap(torch.nn.Module):
+    def forward(self, embed, bboxes, eps=0.01):
+        device = embed.device
+        xx, yy = torch.meshgrid(torch.arange(embed.shape[3], device=device), torch.arange(embed.shape[2], device=device), indexing='xy')
+        x_prob = gaussian_pdf(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None]+eps)
+        y_prob = gaussian_pdf(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None]+eps)
+        return torch.sum(bboxes[:, 4][:, :, None, None] * (x_prob*y_prob), 1, True)
 
 def gauss_bboxes_to_real(bboxes, nstdev):
     # 68.27% of the data falls within 1 stddev of the mean

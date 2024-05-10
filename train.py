@@ -1,12 +1,10 @@
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('dataset')
-parser.add_argument('model')
 parser.add_argument('output')
+parser.add_argument('--detection', choices=['OneStage', 'FCOS', 'DETR'])
+parser.add_argument('--heatmap', choices=['GaussHeatmap'])
 parser.add_argument('--epochs', type=int, default=100)
-parser.add_argument('--penalty1', type=float, default=10)
-parser.add_argument('--penalty2', type=float, default=1)
-parser.add_argument('--use-softmax', action='store_true')
 args = parser.parse_args()
 
 import torch
@@ -29,7 +27,11 @@ tr = torch.utils.data.DataLoader(tr, 32, True, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
 
-model = getattr(models, args.model)(ds.num_classes, args.use_softmax)
+backbone = models.Backbone()
+classifier = models.Classifier(ds.num_classes)
+detection = getattr(models, args.detection)() if args.detection else None
+heatmap = getattr(models, args.heatmap)() if args.heatmap else None
+model = models.Model(backbone, classifier, detection, heatmap)
 model.to(device)
 opt = torch.optim.Adam(model.parameters())
 
@@ -45,12 +47,12 @@ for epoch in range(args.epochs):
         y = y.to(device)
         pred, scores, bboxes = model(x)
         loss = torch.nn.functional.cross_entropy(pred, y)
-        if bboxes != None:
-            loss += args.penalty1 * bboxes['gauss_scores'].mean()
-            loss += args.penalty2 * bboxes['x_gauss_stdev'].mean()
-            loss += args.penalty2 * bboxes['y_gauss_stdev'].mean()
-        elif scores != None:
-            loss += args.penalty1 * scores.mean()
+        #if bboxes != None:
+        #    loss += args.penalty1 * bboxes['gauss_scores'].mean()
+        #    loss += args.penalty2 * bboxes['x_gauss_stdev'].mean()
+        #    loss += args.penalty2 * bboxes['y_gauss_stdev'].mean()
+        #elif scores != None:
+        #    loss += args.penalty1 * scores.mean()
         opt.zero_grad()
         loss.backward()
         opt.step()

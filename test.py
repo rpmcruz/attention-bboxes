@@ -42,24 +42,24 @@ for x, mask, y in ts:
     mask = mask.to(device)
     y = y.to(device)
     with torch.no_grad():
-        pred, scores, bboxes = model(x)
+        pred, heatmap, bboxes = model(x)
         pred = pred.argmax(1)
         acc.update(pred, y)
         if bboxes != None:
             pg.update(bboxes['spatial_scores'], mask)
     if args.visualize:
-        hue = 1-scores
+        hue = 1-heatmap
         hue = torch.nn.functional.interpolate(hue, x.shape[-2:], mode='nearest-exact')
         hue = torch.cat((torch.ones_like(hue), hue, hue), 1)
         show = 0.5*x + 0.5*hue
         plt.imshow(show[0].permute(1, 2, 0).cpu())
-        xgrid = x.shape[3] // scores.shape[3]
-        ygrid = x.shape[2] // scores.shape[2]
+        xgrid = x.shape[3] // heatmap.shape[3]
+        ygrid = x.shape[2] // heatmap.shape[2]
         plt.hlines(range(xgrid, x.shape[3], xgrid), 0, x.shape[3], 'green')
         plt.vlines(range(ygrid, x.shape[2], ygrid), 0, x.shape[2], 'green')
-        for i in range(scores.shape[2]):
-            for j in range(scores.shape[3]):
-                plt.text(j*xgrid, i*ygrid, f'{scores[0, 0, i, j]*100:02.0f}', va='bottom')
+        for i in range(heatmap.shape[2]):
+            for j in range(heatmap.shape[3]):
+                plt.text(j*xgrid, i*ygrid, f'{heatmap[0, 0, i, j]*100:02.0f}', va='bottom')
         if bboxes != None:
             # filter those bounding boxes below a certain level of confidence
             batch_scores = bboxes[f'gauss_scores']
