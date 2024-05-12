@@ -166,12 +166,12 @@ class Heatmap(torch.nn.Module):
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
         xprob = self.f(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None])
         yprob = self.f(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None])
-        # FIXME: gaussian can produce more than one, if deviation too small
+        # avoid the pdf being too big for a single pixel
+        probs = torch.clamp(xprob*yprob, max=1)
         if scores is None:
-            return torch.mean(xprob*yprob, 1, True)
-        heatmap = torch.sum(scores[..., None, None]*xprob*yprob, 1, True)
-        # FIXME: if we do not use softmax, not sure what the best approach here is
-        heatmap = torch.clamp(heatmap, max=1)
+            return torch.mean(probs, 1, True)
+        scores = scores / scores.max()
+        heatmap = torch.sum(scores[..., None, None]*probs, 1, True)
         return heatmap
 
 class GaussHeatmap(Heatmap):
