@@ -25,10 +25,10 @@ class OneStage(torch.nn.Module):
         # to xyxy
         cx = xx + bboxes[:, 0]*xstep
         cy = xx + bboxes[:, 1]*ystep
-        bboxes[:, 0] = cx - bboxes[:, 2]/2
-        bboxes[:, 1] = cy - bboxes[:, 3]/2
-        bboxes[:, 2] = cx + bboxes[:, 2]/2
-        bboxes[:, 3] = cy + bboxes[:, 3]/2
+        bboxes[:, 0] = torch.clamp(cx - bboxes[:, 2]/2, min=0)
+        bboxes[:, 1] = torch.clamp(cy - bboxes[:, 3]/2, min=0)
+        bboxes[:, 2] = torch.clamp(cx + bboxes[:, 2]/2, max=1)
+        bboxes[:, 3] = torch.clamp(cy + bboxes[:, 3]/2, max=1)
         return torch.flatten(bboxes, 1), torch.flatten(scores, 1)
 
 class FCOS(torch.nn.Module):
@@ -110,6 +110,13 @@ class DETR(torch.nn.Module):
         h = self.transformer(pos + h.flatten(2).permute(0, 2, 1), self.query_pos[None].repeat(N, 1, 1))
         bboxes = torch.sigmoid(self.linear_bboxes(h))
         # assume it predicts directly xyxy
+        # ensure that 01 is to the left of 23
+        bboxes = torch.stack((
+            torch.minimum(bboxes[:, 0], bboxes[:, 2]),
+            torch.minimum(bboxes[:, 1], bboxes[:, 3]),
+            torch.maximum(bboxes[:, 0], bboxes[:, 2]),
+            torch.maximum(bboxes[:, 1], bboxes[:, 3]),
+        ), 1)
         return bboxes, None
 
 ############################# GLUE #############################
@@ -157,18 +164,21 @@ class Heatmap(torch.nn.Module):
         xx = torch.arange(0, 1, xstep, device=device)
         yy = torch.arange(0, 1, ystep, device=device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
-        # FIXME: we are now predicting xyxy. this is assuming cx,cy,bw,bh
         xprob = self.f(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None])
         yprob = self.f(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None])
+        # FIXME: gaussian can produce more than one, if deviation too small
         if scores is None:
             return torch.mean(xprob*yprob, 1, True)
-        return torch.sum(scores[..., None, None]*xprob*yprob, 1, True)
+        heatmap = torch.sum(scores[..., None, None]*xprob*yprob, 1, True)
+        # FIXME: if we do not use softmax, not sure what the best approach here is
+        heatmap = torch.clamp(heatmap, max=1)
+        return heatmap
 
 class GaussHeatmap(Heatmap):
     def f(self, x, x1, x2):
         stdev_eps = 0.01
         avg = (x1+x2)/2
-        stdev = torch.amax(x2-x1, x1-x2) + stdev_eps
+        stdev = (x2-x1) + stdev_eps
         sqrt2pi = 2.5066282746310002
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
