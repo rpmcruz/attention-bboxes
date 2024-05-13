@@ -7,6 +7,7 @@ parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'])
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--penalty', type=float, default=0)
 parser.add_argument('--nstdev', type=float, default=1)
+parser.add_argument('--adversarial', action='store_true')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 assert (args.detection == None) == (args.heatmap == None), 'Must enable both or neither detection/heatmap'
@@ -35,9 +36,17 @@ backbone = models.Backbone()
 classifier = models.Classifier(ds.num_classes)
 detection = getattr(models, args.detection)() if args.detection else None
 heatmap = getattr(models, args.heatmap)() if args.heatmap else None
-model = models.Model(backbone, classifier, detection, heatmap)
+
+if detection is None:
+    model = models.SimpleModel(backbone, classifier)
+elif args.adversarial:
+    model = models.ImageOcclusionModel(backbone, classifier, detection, heatmap)
+else:
+    model = models.EncoderOcclusionModel(backbone, classifier, detection, heatmap)
 model.to(device)
 opt = torch.optim.Adam(model.parameters())
+if args.adversarial:
+    adv_opt = torch.optim.Adam(detection.parameters())
 
 ############################# LOOP #############################
 
@@ -49,19 +58,26 @@ for epoch in range(args.epochs):
     for x, _, y in tr:
         x = x.to(device)
         y = y.to(device)
-        pred, heatmap, bboxes = model(x)
-        loss = torch.nn.functional.cross_entropy(pred, y)
-        if heatmap != None:
-            loss += args.penalty * heatmap.mean()
+        pred = model(x)
+        loss = torch.nn.functional.cross_entropy(pred['class'], y)
+        if 'heatmap' in pred:
+            loss += args.penalty * pred['heatmap'].mean()
+        if args.adversarial:
+            adv_loss = torch.nn.functional.cross_entropy(pred['min_class'], y) + \
+                -torch.nn.functional.cross_entropy(pred['max_class'], y)
         opt.zero_grad()
         loss.backward()
         opt.step()
+        if args.adversarial:
+            adv_opt.zero_grad()
+            adv_loss.backward()
+            adv_opt.step()
         avg_loss += float(loss) / len(tr)
         avg_acc += (y == pred.argmax(1)).float().mean() / len(tr)
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}')
     if args.debug:
-        utils.draw_bboxes(f'epoch-{epoch+1}-bboxes.png', x[0], bboxes[0].detach(), args.nstdev)
-        utils.draw_heatmap(f'epoch-{epoch+1}-heatmap.png', x[0], heatmap[0].detach())
+        utils.draw_bboxes(f'epoch-{epoch+1}-bboxes.png', x[0], pred['bboxes'][0].detach(), args.nstdev)
+        utils.draw_heatmap(f'epoch-{epoch+1}-heatmap.png', x[0], pred['heatmap'][0].detach())
 
 torch.save(model.cpu(), args.output)

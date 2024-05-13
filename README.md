@@ -10,12 +10,16 @@ image ──► encoder ──► bboxes ──► heatmap ──► × ──�
               └──────────────────────────────┘               
 ```
 
+Min_{encoder,detection,classifier} Loss
+
 * Adversarial
 ```
 image ──► encoder ─┐► classifier                                         
                    │                                                     
-                   └► bboxes ──► heatmap ──► × ──► encoder ──► classifier
+                   └► bboxes ──► 1-heatmap ──► × ──► encoder ──► classifier
 ```
+
+Min_{encoder,classifier} Loss ; Max_{detection} Loss
 
 Preliminary results using BasicGrid (dataset=STL10):
 

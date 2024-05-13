@@ -121,24 +121,44 @@ class DETR(torch.nn.Module):
 
 ############################# GLUE #############################
 
-class Model(torch.nn.Module):
-    def __init__(self, backbone, classifier, object_detection=None, bboxes2heatmap=None):
+class OcclusionModel(torch.nn.Module):
+    def __init__(self, backbone, classifier, occlusion_level, object_detection, bboxes2heatmap):
         super().__init__()
         self.backbone = backbone
         self.object_detection = object_detection
         self.bboxes2heatmap = bboxes2heatmap
         self.classifier = classifier
+        self.occlusion_level = occlusion_level
 
     def forward(self, images):
         embed = self.backbone(images)
-        heatmap = bboxes = None
-        if self.object_detection is not None:
-            bboxes, scores = self.object_detection(embed)
-            heatmap = self.bboxes2heatmap(embed.shape[2:], bboxes, scores)
+        if self.occlusion_level == 'none':
+            return {'class': self.classifier(embed)}
+        bboxes, scores = self.object_detection(embed)
+        heatmap_shape = embed.shape[2:] if self.encoder_occlusion else images.shape[2:]
+        heatmap = self.bboxes2heatmap(heatmap_shape, bboxes, scores)
+        if scores != None:
+            bboxes = [bb[ss >= 0.5] for bb, ss in zip(bboxes, scores)]
+        if self.occlusion_level == 'encoder':
             embed = heatmap * embed
-            if scores != None:
-                bboxes = [bb[ss >= 0.5] for bb, ss in zip(bboxes, scores)]
-        return self.classifier(embed), heatmap, bboxes
+            return {'class': self.classifier(embed), 'heatmap': heatmap, 'bboxes': bboxes}
+        else:  # image
+            embed2 = self.backbone(heatmap * images)
+            return {
+                'class': self.classifier(embed), 'min_class': self.backbone(heatmap * images),
+                'max_class': self.backbone((1-heatmap) * images), 'heatmap': heatmap, 'bboxes': bboxes}
+
+class SimpleModel(torch.nn.Module):
+    def __init__(self, backbone, classifier):
+        super().__init__(backbone, classifier, 'none', None, None)
+
+class ImageOcclusionModel(torch.nn.Module):
+    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap):
+        super().__init__(backbone, classifier, 'image', object_detection, bboxes2heatmap)
+
+class EncoderOcclusionModel(torch.nn.Module):
+    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap):
+        super().__init__(backbone, classifier, 'encoder', object_detection, bboxes2heatmap)
 
 def Backbone():
     # image 96x96 ---> grid 6x6
