@@ -11,9 +11,8 @@ class OneStage(torch.nn.Module):
         self.scores = torch.nn.LazyConv2d(1, 1)
 
     def forward(self, grid):
-        bboxes, scores = self.output(grid)
-        bboxes = torch.sigmoid(bboxes)
-        scores = torch.sigmoid(scores)
+        bboxes = torch.sigmoid(self.bboxes(grid))
+        scores = torch.sigmoid(self.scores(grid))
         # center x/y move to relative coordinates
         device = grid.device
         xstep = 1/grid.shape[3]
@@ -25,11 +24,13 @@ class OneStage(torch.nn.Module):
         # to xyxy
         cx = xx + bboxes[:, 0]*xstep
         cy = xx + bboxes[:, 1]*ystep
-        bboxes[:, 0] = torch.clamp(cx - bboxes[:, 2]/2, min=0)
-        bboxes[:, 1] = torch.clamp(cy - bboxes[:, 3]/2, min=0)
-        bboxes[:, 2] = torch.clamp(cx + bboxes[:, 2]/2, max=1)
-        bboxes[:, 3] = torch.clamp(cy + bboxes[:, 3]/2, max=1)
-        return torch.flatten(bboxes, 1), torch.flatten(scores, 1)
+        bboxes = torch.stack((
+            torch.clamp(cx - bboxes[:, 2]/2, min=0),
+            torch.clamp(cy - bboxes[:, 3]/2, min=0),
+            torch.clamp(cx + bboxes[:, 2]/2, max=1),
+            torch.clamp(cy + bboxes[:, 3]/2, max=1),
+        ), 1)
+        return torch.flatten(bboxes, 2), torch.flatten(scores, 1)
 
 class FCOS(torch.nn.Module):
     # https://arxiv.org/abs/1904.01355
@@ -95,7 +96,7 @@ class DETR(torch.nn.Module):
         super().__init__()
         self.conv = torch.nn.LazyConv2d(hidden_dim, 1)
         self.transformer = torch.nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, batch_first=True)
-        self.linear_bboxes = torch.nn.Linear(hidden_dim, 4)
+        self.bboxes = torch.nn.Linear(hidden_dim, 4)
         self.query_pos = torch.nn.Parameter(torch.rand(100, hidden_dim))
         self.row_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
         self.col_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
@@ -108,7 +109,7 @@ class DETR(torch.nn.Module):
             self.row_embed[:H, None].repeat(1, W, 1),
         ], -1).flatten(0, 1)[None]
         h = self.transformer(pos + h.flatten(2).permute(0, 2, 1), self.query_pos[None].repeat(N, 1, 1))
-        bboxes = torch.sigmoid(self.linear_bboxes(h))
+        bboxes = torch.sigmoid(self.bboxes(h))
         # assume it predicts directly xyxy
         # ensure that 01 is to the left of 23
         bboxes = torch.stack((
@@ -122,48 +123,60 @@ class DETR(torch.nn.Module):
 ############################# GLUE #############################
 
 class OcclusionModel(torch.nn.Module):
-    def __init__(self, backbone, classifier, occlusion_level, object_detection, bboxes2heatmap):
+    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, occlusion_level, is_adversarial):
         super().__init__()
         self.backbone = backbone
         self.object_detection = object_detection
         self.bboxes2heatmap = bboxes2heatmap
         self.classifier = classifier
         self.occlusion_level = occlusion_level
+        self.is_adversarial = is_adversarial
 
     def forward(self, images):
         embed = self.backbone(images)
         if self.occlusion_level == 'none':
             return {'class': self.classifier(embed)}
         bboxes, scores = self.object_detection(embed)
-        heatmap_shape = embed.shape[2:] if self.encoder_occlusion else images.shape[2:]
+        heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
         heatmap = self.bboxes2heatmap(heatmap_shape, bboxes, scores)
         if scores != None:
-            bboxes = [bb[ss >= 0.5] for bb, ss in zip(bboxes, scores)]
+            bboxes = [bb[:, ss >= 0.5] for bb, ss in zip(bboxes, scores)]
+        if self.is_adversarial:
+            if self.occlusion_level == 'encoder':
+                min_embed = heatmap * embed
+                max_embed = (1-heatmap) * embed
+            else:  # image
+                min_embed = self.backbone(heatmap * images)
+                max_embed = self.backbone((1-heatmap) * images)
+            return {
+                'class': self.classifier(embed),
+                'min_class': self.classifier(min_embed),
+                'max_class': self.classifier(max_embed),
+                #'heatmap': heatmap, 'bboxes': bboxes
+            }
         if self.occlusion_level == 'encoder':
             embed = heatmap * embed
-            return {'class': self.classifier(embed), 'heatmap': heatmap, 'bboxes': bboxes}
-        else:  # image
-            embed2 = self.backbone(heatmap * images)
             return {
-                'class': self.classifier(embed), 'min_class': self.backbone(heatmap * images),
-                'max_class': self.backbone((1-heatmap) * images), 'heatmap': heatmap, 'bboxes': bboxes}
+                'class': self.classifier(embed),
+                'heatmap': heatmap, 'bboxes': bboxes
+            }
 
-class SimpleModel(torch.nn.Module):
+class SimpleModel(OcclusionModel):
     def __init__(self, backbone, classifier):
-        super().__init__(backbone, classifier, 'none', None, None)
+        super().__init__(backbone, classifier, None, None, 'none', False)
 
-class ImageOcclusionModel(torch.nn.Module):
-    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap):
-        super().__init__(backbone, classifier, 'image', object_detection, bboxes2heatmap)
+class ImageOcclusionModel(OcclusionModel):
+    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, is_adversarial):
+        super().__init__(backbone, classifier, object_detection, bboxes2heatmap, 'image', is_adversarial)
 
-class EncoderOcclusionModel(torch.nn.Module):
-    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap):
-        super().__init__(backbone, classifier, 'encoder', object_detection, bboxes2heatmap)
+class EncoderOcclusionModel(OcclusionModel):
+    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, is_adversarial):
+        super().__init__(backbone, classifier, object_detection, bboxes2heatmap, 'encoder', is_adversarial)
 
 def Backbone():
-    # image 96x96 ---> grid 6x6
-    # sometimes people use [:-2] because they use 224x224 images (7x7 grid)
-    return torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-3])
+    # image 96x96 ----> grid 6x6 if [:-3]
+    # image 224x224 --> grid 7x7 if [:-2]
+    return torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-2])
 
 class Classifier(torch.nn.Module):
     def __init__(self, num_classes):
@@ -204,7 +217,7 @@ class GaussHeatmap(Heatmap):
 
 class LogisticHeatmap(Heatmap):
     def f(self, x, x1, x2):
-        k = 1
+        k = 5
         logistic0 = 1/(1+torch.exp(-k*(x-x1)))
         logistic1 = 1 - 1/(1+torch.exp(-k*(x-x2)))
         return logistic0 + logistic1
