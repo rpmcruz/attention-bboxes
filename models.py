@@ -152,7 +152,7 @@ class OcclusionModel(torch.nn.Module):
                 'class': self.classifier(embed),
                 'min_class': self.classifier(min_embed),
                 'max_class': self.classifier(max_embed),
-                #'heatmap': heatmap, 'bboxes': bboxes
+                'heatmap': heatmap, 'bboxes': bboxes
             }
         if self.occlusion_level == 'encoder':
             embed = heatmap * embed
