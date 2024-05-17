@@ -112,12 +112,14 @@ class DETR(torch.nn.Module):
         bboxes = torch.sigmoid(self.bboxes(h))
         # assume it predicts directly xyxy
         # ensure that 01 is to the left of 23
+        # predicted bounding boxes are in cxcywh format => convert to xyxy
+        bboxes = torch.sigmoid(self.bboxes(h))
         bboxes = torch.stack((
-            torch.minimum(bboxes[:, 0], bboxes[:, 2]),
-            torch.minimum(bboxes[:, 1], bboxes[:, 3]),
-            torch.maximum(bboxes[:, 0], bboxes[:, 2]),
-            torch.maximum(bboxes[:, 1], bboxes[:, 3]),
-        ), 1)
+            bboxes[..., 0] - bboxes[..., 2]/2,
+            bboxes[..., 1] - bboxes[..., 3]/2,
+            bboxes[..., 0] + bboxes[..., 2]/2,
+            bboxes[..., 1] + bboxes[..., 3]/2,
+        ), -1)
         return bboxes, None
 
 ############################# GLUE #############################
