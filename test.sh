@@ -1,27 +1,27 @@
 #!/bin/bash
 
-DATASETS="Birds StanfordCars StanfordDogs"
-PENALTIES1="0 0.1 1"
-PENALTIES2="0 0.0001 0.001"
+#DATASETS="Birds StanfordCars StanfordDogs"
+DATASETS="Birds"
+#DETECTIONS="OneStage DETR"
+DETECTIONS="OneStage"
+HEATMAPS="GaussHeatmap LogisticHeatmap"
+OCCLUSIONS="encoder image"
+PENALTIES="0 0.1 1"
 
 for DATASET in $DATASETS; do
-NAME="model-$DATASET-Baseline.pth"
-python3 test.py $DATASET $NAME
+MODEL="model-$DATASET-none.pth"
+python3 test.py $MODEL $DATASET
 
-# without softmax
-for PENALTY1 in $PENALTIES1; do
-for PENALTY2 in $PENALTIES2; do
-    NAME="model-$DATASET-GaussianGrid-penalty-$PENALTY1-$PENALTY2-usesoftmax-0.pth"
-    python3 test.py $DATASET $NAME
-done
-done
+for DETECTION in $DETECTIONS; do
+for HEATMAP in $HEATMAPS; do
+for PENALTY in $PENALTIES; do
+OCCLUSION="encoder"
+MODEL="model-$DATASET-$OCCLUSION-$DETECTION-$HEATMAP-$PENALTY.pth"
+python3 test.py $MODEL $DATASET
 
-# with softmax
-for PENALTY1 in $PENALTIES1; do
-for PENALTY2 in $PENALTIES2; do
-    NAME="model-$DATASET-GaussianGrid-penalty-$PENALTY1-$PENALTY2-usesoftmax-1.pth"
-    python3 test.py $DATASET $NAME
-done
+for OCCLUSION in $OCCLUSIONS; do
+MODEL="model-$DATASET-$OCCLUSION-$DETECTION-$HEATMAP-$PENALTY-adversarial.pth"
+python3 test.py $MODEL $DATASET
 done
 
-done
+done; done; done; done

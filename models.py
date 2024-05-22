@@ -1,34 +1,50 @@
 import torch
 import torchvision
 
+def cxcywh_to_xyxy(bboxes):
+    return torch.stack((
+        torch.clamp(bboxes[:, 0] - bboxes[:, 2]/2, min=0),
+        torch.clamp(bboxes[:, 1] - bboxes[:, 3]/2, min=0),
+        torch.clamp(bboxes[:, 0] + bboxes[:, 2]/2, max=1),
+        torch.clamp(bboxes[:, 1] + bboxes[:, 3]/2, max=1),
+    ), 1)
+
 ####################### OBJ DETECT MODELS #######################
 # the bounding boxes are of the type xyxy (normalized 0-1)
 
 class OneStage(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, use_softmax=True, bboxes_normalized=False):
         super().__init__()
         self.bboxes = torch.nn.LazyConv2d(4, 1)
         self.scores = torch.nn.LazyConv2d(1, 1)
+        self.use_softmax = use_softmax
+        self.bboxes_normalized = bboxes_normalized
 
     def forward(self, grid):
-        bboxes = torch.sigmoid(self.bboxes(grid))
-        scores = torch.sigmoid(self.scores(grid))
-        # center x/y move to relative coordinates
         device = grid.device
-        xstep = 1/grid.shape[3]
-        ystep = 1/grid.shape[2]
-        xx = torch.arange(0, 1, xstep, device=device)
-        yy = torch.arange(0, 1, ystep, device=device)
+        bboxes = self.bboxes(grid)
+        scores = self.scores(grid)
+        scores = torch.softmax(scores, 1) if self.use_softmax else torch.sigmoid(scores)
+        if self.bboxes_normalized:
+            bboxes = torch.sigmoid(bboxes)
+            xstep = 1/grid.shape[3]
+            ystep = 1/grid.shape[2]
+            xx = torch.arange(0, 1, xstep, device=device)
+            yy = torch.arange(0, 1, ystep, device=device)
+        else:
+            bboxes = torch.stack((
+                torch.sigmoid(bboxes[:, 0]), torch.sigmoid(bboxes[:, 1]),
+                torch.nn.functional.softplus(bboxes[:, 2]),
+                torch.nn.functional.softplus(bboxes[:, 3]),
+            ), 1)
+            xstep = ystep = 1
+            xx = torch.arange(grid.shape[3], device=device)
+            yy = torch.arange(grid.shape[2], device=device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
-        # it predictes the center x/y and size. we then convert
-        # to xyxy
-        cx = xx + bboxes[:, 0]*xstep
-        cy = xx + bboxes[:, 1]*ystep
         bboxes = torch.stack((
-            torch.clamp(cx - bboxes[:, 2]/2, min=0),
-            torch.clamp(cy - bboxes[:, 3]/2, min=0),
-            torch.clamp(cx + bboxes[:, 2]/2, max=1),
-            torch.clamp(cy + bboxes[:, 3]/2, max=1),
+            xx + bboxes[:, 0]*xstep,
+            yy + bboxes[:, 1]*ystep,
+            bboxes[:, 2], bboxes[:, 3]
         ), 1)
         return torch.flatten(bboxes, 2), torch.flatten(scores, 1)
 
@@ -92,7 +108,7 @@ class FCOS(torch.nn.Module):
 
 class DETR(torch.nn.Module):
     # https://github.com/facebookresearch/detr
-    def __init__(self, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6):
+    def __init__(self, hidden_dim=256, nheads=8, num_encoder_layers=6, num_decoder_layers=6, bboxes_normalized=False):
         super().__init__()
         self.conv = torch.nn.LazyConv2d(hidden_dim, 1)
         self.transformer = torch.nn.Transformer(hidden_dim, nheads, num_encoder_layers, num_decoder_layers, batch_first=True)
@@ -100,6 +116,7 @@ class DETR(torch.nn.Module):
         self.query_pos = torch.nn.Parameter(torch.rand(100, hidden_dim))
         self.row_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
         self.col_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
+        self.bboxes_normalized = bboxes_normalized
 
     def forward(self, x):
         h = self.conv(x)
@@ -112,14 +129,16 @@ class DETR(torch.nn.Module):
         bboxes = torch.sigmoid(self.bboxes(h))
         # assume it predicts directly xyxy
         # ensure that 01 is to the left of 23
-        # predicted bounding boxes are in cxcywh format => convert to xyxy
-        bboxes = torch.sigmoid(self.bboxes(h))
-        bboxes = torch.stack((
-            bboxes[..., 0] - bboxes[..., 2]/2,
-            bboxes[..., 1] - bboxes[..., 3]/2,
-            bboxes[..., 0] + bboxes[..., 2]/2,
-            bboxes[..., 1] + bboxes[..., 3]/2,
-        ), -1)
+        # predicted bounding boxes are in cxcywh format
+        bboxes = self.bboxes(h)
+        if self.bboxes_normalized:
+            bboxes = torch.sigmoid(bboxes)
+        else:
+            bboxes = torch.stack((
+                torch.sigmoid(bboxes[:, 0]), torch.sigmoid(bboxes[:, 1]),
+                torch.nn.functional.softplus(bboxes[:, 2]),
+                torch.nn.functional.softplus(bboxes[:, 3]),
+            ), 1)
         return bboxes, None
 
 ############################# GLUE #############################
@@ -192,34 +211,56 @@ class Classifier(torch.nn.Module):
 ########################### PROPOSALS ###########################
 
 class Heatmap(torch.nn.Module):
-    def forward(self, output_shape, bboxes, scores):
+    def forward(self, output_shape, bboxes, scores, bboxes_normalized=False):
         device = bboxes.device
-        xstep = 1/output_shape[1]
-        ystep = 1/output_shape[0]
-        xx = torch.arange(0, 1, xstep, device=device)
-        yy = torch.arange(0, 1, ystep, device=device)
+        if bboxes_normalized:
+            xstep = 1/output_shape[1]
+            ystep = 1/output_shape[0]
+            xx = torch.arange(0, 1, xstep, device=device)
+            yy = torch.arange(0, 1, ystep, device=device)
+        else:
+            xstep = ystep = 1
+            xx = torch.arange(output_shape[1], device=device)
+            yy = torch.arange(output_shape[0], device=device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
         xprob = self.f(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None])
         yprob = self.f(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None])
         # avoid the pdf being too big for a single pixel
         probs = torch.clamp(xprob*yprob, max=1)
         if scores is None:
-            return torch.mean(probs, 1, True)
-        scores = scores / scores.max()
+            r = torch.mean(probs, 1, True)
+            print('r2:', r.min().detach(), r.max().detach())
+            return r
+        #scores = scores / scores.max()
+        print('scores:', scores.min(), scores.max())
         heatmap = torch.sum(scores[..., None, None]*probs, 1, True)
+        print('heatmap:', heatmap.min().detach(), heatmap.max().detach())
         return heatmap
 
 class GaussHeatmap(Heatmap):
     def f(self, x, x1, x2):
-        stdev_eps = 0.01
-        avg = (x1+x2)/2
-        stdev = (x2-x1) + stdev_eps
+        stdev_eps = 1e-6
+        avg = x1
+        # divided by 100 to make it smaller
+        stdev = x2 + stdev_eps
         sqrt2pi = 2.5066282746310002
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
 class LogisticHeatmap(Heatmap):
     def f(self, x, x1, x2):
-        k = 5
+        k = 1
+        x1 = x1 - x2/2
+        x2 = x1 + x2/2
         logistic0 = 1/(1+torch.exp(-k*(x-x1)))
         logistic1 = 1 - 1/(1+torch.exp(-k*(x-x2)))
-        return logistic0 + logistic1
+        #print('logistic0:', logistic0.min().detach(), logistic0.max().detach())
+        #print('logistic1:', logistic1.min().detach(), logistic1.max().detach())
+        r = logistic0 * logistic1
+        r = r / r.amax(1, True)  # divide by max so it's not smaller than 1
+        # FIXME: maybe divide by sum or max ?
+        #print('r:', r.min().detach(), r.max().detach())
+        #print('x1:', x1[0, :5, 0, 0].detach())
+        #print('x2:', x2[0, :5, 0, 0].detach())
+        #print('r:', r[0, :5, 0, 0].detach())
+        #print()
+        return r

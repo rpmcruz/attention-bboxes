@@ -10,11 +10,9 @@ class PointingGame(torchmetrics.Metric):
 
     def update(self, preds, target):
         preds = torch.nn.functional.interpolate(preds, target.shape[-2:], mode='nearest-exact')
-        for p, t in zip(preds, target):
-            i = p.argmax()
-            x = i % p.shape[1]
-            y = i // p.shape[1]
-            self.correct += t[0, y, x] != 0
+        preds = preds.view(len(preds), -1)
+        target = target.view(len(target), -1)
+        self.correct += sum(target[range(len(target)), torch.argmax(preds, 1)] != 0)
         self.total += len(preds)
 
     def compute(self):
@@ -36,56 +34,47 @@ class GradCAM:
         return torch.nn.functional.relu(torch.sum(alpha * self.activation, 1))
 
 class DegradationScore(torchmetrics.Metric):
-    def __init__(self, resnet, loss, score='acc'):
-        self.model = resnet
+    def __init__(self, model, score='acc'):
+        super().__init__()
+        self.model = model
         if score == 'acc':
-            self.score = lambda ypred, y: (ypred == y).float().mean()
+            self.score = lambda ypred, y: (ypred == y).float()
         else:
             raise Exception(f'Unknown score: {score}')
-        self.add_state('areas', default=torch.tensor(0), dist_reduce_fx='sum')
+        self.add_state('areas', default=torch.tensor(0.), dist_reduce_fx='sum')
         self.add_state('count', default=torch.tensor(0), dist_reduce_fx='sum')
 
-    def update(self, batch, y):
-        x, y = batch
-        e = GradCAM()(self.model, self.model.layer4[1].conv2, x, y)
-        for b in range(len(x)):
-            lerf = self.degradation_curve('lerf', self.model, self.score, x[b], y[b], e[b])
-            morf = self.degradation_curve('morf', self.model, self.score, x[b], y[b], e[b])
+    def update(self, images, true_classes, heatmaps):
+        for image, true_class, heatmap in zip(images, true_classes, heatmaps):
+            lerf = self.degradation_curve('lerf', self.model, self.score, image, true_class, heatmap)
+            morf = self.degradation_curve('morf', self.model, self.score, image, true_class, heatmap)
             self.areas += (lerf - morf).mean()
-        self.count += len(x)
+        self.count += len(images)
 
     def compute(self):
         return self.areas / self.count
 
-    def degradation_curve(self, curve_type, model, score_fn, x, y, e):
+    def degradation_curve(self, curve_type, model, score_fn, image, true_class, heatmap):
         # Given an explanation map, occlude by 8x8 creating two curves: least
         # relevant removed first (LeRF) and most relevant removed first (MoRF),
         # where the score is computed for a given metric. The result is the area
         # between the two curves.
-        #
         # Schulz, Karl, et al. "Restricting the flow: Information bottlenecks for
         # attribution." arXiv preprint arXiv:2001.00396 (2020).
-        #
-        # e is the explanation map.
-        # like in the paper occlude by 8x8 from the worst to the best (and
-        # vice-versa)
         assert curve_type in ['lerf', 'morf']
-        assert len(x.shape) == 3
-        assert len(e.shape) == 2
-        x = x.clone()
+        assert len(image.shape) == 3
+        assert len(heatmap.shape) == 3 and heatmap.shape[0] == 1
+        heatmap = heatmap[0]
         descending = curve_type == 'morf'
-        ix = torch.argsort(e.flatten(), descending=descending)
-        xx = ix % e.shape[1]
-        yy = ix // e.shape[1]
-        xscale = x.shape[2] // e.shape[1]
-        yscale = x.shape[1] // e.shape[0]
-        curve = []
-        for i in range(e.shape[0]*e.shape[1]-1):
-            yslice = slice(yy[i]*yscale, (yy[i]+1)*yscale)
-            xslice = slice(xx[i]*xscale, (xx[i]+1)*xscale)
-            x[:, yslice, xslice] = 0
-            with torch.no_grad():
-                ypred = model(x[None])
-                s = score_fn(ypred, y)
-                curve.append(s)
-        return torch.tensor(curve)
+        ix = torch.argsort(heatmap.view(-1), descending=descending)[:-1]
+        cc = ix % heatmap.shape[1]
+        rr = ix // heatmap.shape[1]
+        xscale = image.shape[2] // heatmap.shape[1]
+        yscale = image.shape[1] // heatmap.shape[0]
+        # create occlusions covered by the heatmap
+        occlusions = image[None].repeat(len(ix), 1, 1, 1)
+        for i, (c, r) in enumerate(zip(cc, rr)):
+            occlusions[i:, c*yscale:(c+1)*yscale, r*xscale:(r+1)*xscale] = 0
+        with torch.no_grad():
+            ypred = model(occlusions)['class'].argmax(1)
+        return score_fn(ypred, true_class)

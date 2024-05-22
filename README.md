@@ -5,18 +5,28 @@ Possible approaches:
 
 * Occlusion
 ```
-image ──► encoder ──► bboxes ──► heatmap ──► × ──► classifier
-              │                              ▲               
-              └──────────────────────────────┘               
+                                ┌──────────────┐                                 
+         ┌───────┐              │differentiable│                     ┌──────────┐
+image───►│encoder├──► bboxes───►│transformation├──► heatmap ──► ⊗ ──►│classifier│
+         └───┬───┘              └──────────────┘                ▲    └──────────┘
+             │                                                  │                
+             └──────────────────────────────────────────────────┘                  
 ```
 
 Min_{encoder,detection,classifier} Loss
 
 * Adversarial
 ```
-image ──► encoder ─┐► classifier                                         
-                   │                                                     
-                   └► bboxes ──► 1-heatmap ──► × ──► encoder ──► classifier
+         ┌───────┐                                                      ┌──────────┐
+image───►│encoder├─────────────────────────────────────────────────────►│classifier│
+         └───┬───┘                                                      └──────────┘
+             │                                                                ▲     
+             │       ┌─────────┐     ┌──────────────┐                         │     
+             ├──────►│detection├────►│differentiable├───► 1-heatmap ──► ⊗ ────┘     
+             │       │head     │     │transformation│                   ▲           
+             │       └─────────┘     └──────────────┘                   │           
+             │                                                          │           
+             └──────────────────────────────────────────────────────────┘           
 ```
 
 Min_{encoder,classifier} Loss ; Max_{detection} Loss

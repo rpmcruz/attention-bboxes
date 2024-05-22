@@ -1,31 +1,35 @@
 #!/bin/bash
 
-DATASETS="Birds StanfordCars StanfordDogs"
+#DATASETS="Birds StanfordCars StanfordDogs"
+DATASETS="Birds"
 DETECTIONS="OneStage DETR"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
 OCCLUSIONS="encoder image"
-PENALTIES="0 0.1 1"
+PENALTIES="0 0.001"
 
 for DATASET in $DATASETS; do
-OUT="model-$DATASET-none.pth"
-if [ ! -f $OUT ]; then
-    echo $OUT
-    python3 train.py $OUT $DATASET
+MODEL="model-$DATASET-none.pth"
+if [ ! -f $MODEL ]; then
+    echo $MODEL
+    python3 train.py $MODEL $DATASET
 fi
 
 for DETECTION in $DETECTIONS; do
 for HEATMAP in $HEATMAPS; do
-for OCCLUSION in $OCCLUSIONS; do
 for PENALTY in $PENALTIES; do
-OUT="model-$DATASET-$OCCLUSION-$DETECTION-$HEATMAP-$PENALTY.pth"
-if [ ! -f $OUT ]; then
-    echo $OUT
-    python3 train.py $OUT $DATASET --occlusion $OCCLUSION --detection $DETECTION --heatmap $HEATMAP --penalty $PENALTY
-fi
-OUT="model-$DATASET-$OCCLUSION-$DETECTION-$HEATMAP-$PENALTY-adversarial.pth"
-if [ ! -f $OUT ]; then
-    echo $OUT
-    python3 train.py $OUT $DATASET --occlusion $OCCLUSION --detection $DETECTION --heatmap $HEATMAP --penalty $PENALTY --adversarial
+OCCLUSION="encoder"
+MODEL="model-$DATASET-$OCCLUSION-$DETECTION-$HEATMAP-$PENALTY.pth"
+if [ ! -f $MODEL ]; then
+    echo $MODEL
+    python3 train.py $MODEL $DATASET --occlusion $OCCLUSION --detection $DETECTION --heatmap $HEATMAP --penalty $PENALTY
 fi
 
-done; done; done; done; done
+for OCCLUSION in $OCCLUSIONS; do
+MODEL="model-$DATASET-$OCCLUSION-$DETECTION-$HEATMAP-$PENALTY-adversarial.pth"
+if [ ! -f $MODEL ]; then
+    echo $MODEL
+    python3 train.py $MODEL $DATASET --occlusion $OCCLUSION --detection $DETECTION --heatmap $HEATMAP --penalty $PENALTY --adversarial
+fi
+done
+
+done; done; done; done
