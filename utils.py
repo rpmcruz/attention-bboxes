@@ -22,6 +22,5 @@ def draw_heatmap(output, image, heatmap):
     hue = torch.nn.functional.interpolate(hue[None], image.shape[1:], mode='nearest-exact')[0]
     hue = torch.cat((torch.ones_like(hue), hue, hue), 0)
     show = 0.5*image + 0.5*hue
-    print('show:', show.min(), show.max(), 'heatmap:', heatmap.min(), heatmap.max())
     plt.imshow(show.cpu().permute(1, 2, 0))
     plt.savefig(output)

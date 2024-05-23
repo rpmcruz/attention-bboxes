@@ -24,7 +24,6 @@ class OneStage(torch.nn.Module):
         device = grid.device
         bboxes = self.bboxes(grid)
         scores = self.scores(grid)
-        scores = torch.softmax(scores, 1) if self.use_softmax else torch.sigmoid(scores)
         if self.bboxes_normalized:
             bboxes = torch.sigmoid(bboxes)
             xstep = 1/grid.shape[3]
@@ -46,7 +45,9 @@ class OneStage(torch.nn.Module):
             yy + bboxes[:, 1]*ystep,
             bboxes[:, 2], bboxes[:, 3]
         ), 1)
-        return torch.flatten(bboxes, 2), torch.flatten(scores, 1)
+        scores = torch.flatten(scores, 1)
+        scores = torch.softmax(scores, 1) if self.use_softmax else torch.sigmoid(scores)
+        return torch.flatten(bboxes, 2), scores
 
 class FCOS(torch.nn.Module):
     # https://arxiv.org/abs/1904.01355
@@ -228,13 +229,9 @@ class Heatmap(torch.nn.Module):
         # avoid the pdf being too big for a single pixel
         probs = torch.clamp(xprob*yprob, max=1)
         if scores is None:
-            r = torch.mean(probs, 1, True)
-            print('r2:', r.min().detach(), r.max().detach())
-            return r
+            return torch.mean(probs, 1, True)
         #scores = scores / scores.max()
-        print('scores:', scores.min(), scores.max())
         heatmap = torch.sum(scores[..., None, None]*probs, 1, True)
-        print('heatmap:', heatmap.min().detach(), heatmap.max().detach())
         return heatmap
 
 class GaussHeatmap(Heatmap):
@@ -253,14 +250,6 @@ class LogisticHeatmap(Heatmap):
         x2 = x1 + x2/2
         logistic0 = 1/(1+torch.exp(-k*(x-x1)))
         logistic1 = 1 - 1/(1+torch.exp(-k*(x-x2)))
-        #print('logistic0:', logistic0.min().detach(), logistic0.max().detach())
-        #print('logistic1:', logistic1.min().detach(), logistic1.max().detach())
         r = logistic0 * logistic1
         r = r / r.amax(1, True)  # divide by max so it's not smaller than 1
-        # FIXME: maybe divide by sum or max ?
-        #print('r:', r.min().detach(), r.max().detach())
-        #print('x1:', x1[0, :5, 0, 0].detach())
-        #print('x2:', x2[0, :5, 0, 0].detach())
-        #print('r:', r[0, :5, 0, 0].detach())
-        #print()
         return r

@@ -87,7 +87,7 @@ for epoch in range(args.epochs):
             heatmaps = torch.nn.functional.interpolate(pred['heatmap'], masks.shape[-2:], mode='nearest-exact')
             avg_pg += float(torch.mean((masks.view(len(masks), -1)[range(len(masks)), torch.argmax(heatmaps.view(len(heatmaps), -1), 1)] != 0).float())) / len(tr)
     toc = time()
-    print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}' + (' - Avg adversarial loss: {avg_adv_loss}' if args.adversarial else '') + f' - Avg pg: {avg_pg}')
+    print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}' + (f' - Avg adversarial loss: {avg_adv_loss}' if args.adversarial else '') + f' - Avg pg: {avg_pg}')
     if args.debug:
         utils.draw_bboxes(f'epoch-{epoch+1}-bboxes.png', x[0], pred['bboxes'][0].detach(), args.nstdev)
         utils.draw_heatmap(f'epoch-{epoch+1}-heatmap.png', x[0], pred['heatmap'][0].detach())
