@@ -62,8 +62,8 @@ for epoch in range(args.epochs):
         y = y.to(device)
         pred = model(x)
         loss = torch.nn.functional.cross_entropy(pred['class'], y)
-        #if 'heatmap' in pred:
-        #    loss = loss + (args.penalty * pred['heatmap'].mean())
+        if 'heatmap' in pred:
+            loss = loss + (args.penalty * pred['heatmap'].mean())
         opt.zero_grad()
         loss.backward(retain_graph=args.adversarial)
         if args.adversarial:
@@ -78,11 +78,10 @@ for epoch in range(args.epochs):
                 for param in module.parameters():
                     param.requires_grad = True
             avg_adv_loss += float(adv_loss) / len(tr)
-        opt.step()  # <--- erro
+        opt.step()
         avg_loss += float(loss) / len(tr)
         avg_acc += (y == pred['class'].argmax(1)).float().mean() / len(tr)
-        if pred['heatmap'] != None:
-            #print('heatmap:', pred['heatmap'].min(), pred['heatmap'].max())
+        if 'heatmap' in pred:
             masks = masks.to(device)
             heatmaps = torch.nn.functional.interpolate(pred['heatmap'], masks.shape[-2:], mode='nearest-exact')
             avg_pg += float(torch.mean((masks.view(len(masks), -1)[range(len(masks)), torch.argmax(heatmaps.view(len(heatmaps), -1), 1)] != 0).float())) / len(tr)

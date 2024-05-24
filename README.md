@@ -5,12 +5,12 @@ Possible approaches:
 
 * Occlusion
 ```
-                                ┌──────────────┐                                 
-         ┌───────┐              │differentiable│                     ┌──────────┐
-image───►│encoder├──► bboxes───►│transformation├──► heatmap ──► ⊗ ──►│classifier│
-         └───┬───┘              └──────────────┘                ▲    └──────────┘
-             │                                                  │                
-             └──────────────────────────────────────────────────┘                  
+                      ┌─────────┐               ┌──────────────┐                                 
+         ┌───────┐    │detection│               │differentiable│                     ┌──────────┐
+image───►│encoder├───►│head     ├────►bboxes───►│transformation├──► heatmap ──► ⊗ ──►│classifier│
+         └───┬───┘    └─────────┘               └──────────────┘                ▲    └──────────┘
+             │                                                                  │                
+             └──────────────────────────────────────────────────────────────────┘                
 ```
 
 Min_{encoder,detection,classifier} Loss

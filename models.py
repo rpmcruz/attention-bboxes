@@ -1,14 +1,6 @@
 import torch
 import torchvision
 
-def cxcywh_to_xyxy(bboxes):
-    return torch.stack((
-        torch.clamp(bboxes[:, 0] - bboxes[:, 2]/2, min=0),
-        torch.clamp(bboxes[:, 1] - bboxes[:, 3]/2, min=0),
-        torch.clamp(bboxes[:, 0] + bboxes[:, 2]/2, max=1),
-        torch.clamp(bboxes[:, 1] + bboxes[:, 3]/2, max=1),
-    ), 1)
-
 ####################### OBJ DETECT MODELS #######################
 # the bounding boxes are of the type xyxy (normalized 0-1)
 
