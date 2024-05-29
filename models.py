@@ -1,6 +1,73 @@
 import torch
 import torchvision
 
+############################# BASICS #############################
+
+class OcclusionModel(torch.nn.Module):
+    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, occlusion_level, is_adversarial):
+        super().__init__()
+        self.backbone = backbone
+        self.object_detection = object_detection
+        self.bboxes2heatmap = bboxes2heatmap
+        self.classifier = classifier
+        self.occlusion_level = occlusion_level
+        self.is_adversarial = is_adversarial
+
+    def forward(self, images):
+        embed = self.backbone(images)
+        if self.occlusion_level == 'none':
+            return {'class': self.classifier(embed)}
+        bboxes, scores = self.object_detection(embed)
+        heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
+        heatmap = self.bboxes2heatmap(heatmap_shape, bboxes, scores)
+        if scores != None:
+            bboxes = [bb[:, ss >= 0.5] for bb, ss in zip(bboxes, scores)]
+        if self.is_adversarial:
+            if self.occlusion_level == 'encoder':
+                min_embed = heatmap * embed
+                max_embed = (1-heatmap) * embed
+            else:  # image
+                min_embed = self.backbone(heatmap * images)
+                max_embed = self.backbone((1-heatmap) * images)
+            return {
+                'class': self.classifier(embed),
+                'min_class': self.classifier(min_embed),
+                'max_class': self.classifier(max_embed),
+                'heatmap': heatmap, 'bboxes': bboxes
+            }
+        if self.occlusion_level == 'encoder':
+            embed = heatmap * embed
+            return {
+                'class': self.classifier(embed),
+                'heatmap': heatmap, 'bboxes': bboxes
+            }
+
+class SimpleModel(OcclusionModel):
+    def __init__(self, backbone, classifier):
+        super().__init__(backbone, classifier, None, None, 'none', False)
+
+class ImageOcclusionModel(OcclusionModel):
+    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, is_adversarial):
+        super().__init__(backbone, classifier, object_detection, bboxes2heatmap, 'image', is_adversarial)
+
+class EncoderOcclusionModel(OcclusionModel):
+    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, is_adversarial):
+        super().__init__(backbone, classifier, object_detection, bboxes2heatmap, 'encoder', is_adversarial)
+
+def Backbone():
+    # image 96x96 ----> grid 6x6 if [:-3]
+    # image 224x224 --> grid 7x7 if [:-2]
+    return torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-2])
+
+class Classifier(torch.nn.Module):
+    def __init__(self, num_classes):
+        super().__init__()
+        self.output = torch.nn.LazyLinear(num_classes)
+
+    def forward(self, x):
+        x = torch.sum(x, (2, 3))  # global pooling
+        return self.output(x)
+
 ####################### OBJ DETECT MODELS #######################
 # the bounding boxes are of the type xyxy (normalized 0-1)
 
@@ -133,73 +200,6 @@ class DETR(torch.nn.Module):
                 torch.nn.functional.softplus(bboxes[:, 3]),
             ), 1)
         return bboxes, None
-
-############################# GLUE #############################
-
-class OcclusionModel(torch.nn.Module):
-    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, occlusion_level, is_adversarial):
-        super().__init__()
-        self.backbone = backbone
-        self.object_detection = object_detection
-        self.bboxes2heatmap = bboxes2heatmap
-        self.classifier = classifier
-        self.occlusion_level = occlusion_level
-        self.is_adversarial = is_adversarial
-
-    def forward(self, images):
-        embed = self.backbone(images)
-        if self.occlusion_level == 'none':
-            return {'class': self.classifier(embed)}
-        bboxes, scores = self.object_detection(embed)
-        heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
-        heatmap = self.bboxes2heatmap(heatmap_shape, bboxes, scores)
-        if scores != None:
-            bboxes = [bb[:, ss >= 0.5] for bb, ss in zip(bboxes, scores)]
-        if self.is_adversarial:
-            if self.occlusion_level == 'encoder':
-                min_embed = heatmap * embed
-                max_embed = (1-heatmap) * embed
-            else:  # image
-                min_embed = self.backbone(heatmap * images)
-                max_embed = self.backbone((1-heatmap) * images)
-            return {
-                'class': self.classifier(embed),
-                'min_class': self.classifier(min_embed),
-                'max_class': self.classifier(max_embed),
-                'heatmap': heatmap, 'bboxes': bboxes
-            }
-        if self.occlusion_level == 'encoder':
-            embed = heatmap * embed
-            return {
-                'class': self.classifier(embed),
-                'heatmap': heatmap, 'bboxes': bboxes
-            }
-
-class SimpleModel(OcclusionModel):
-    def __init__(self, backbone, classifier):
-        super().__init__(backbone, classifier, None, None, 'none', False)
-
-class ImageOcclusionModel(OcclusionModel):
-    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, is_adversarial):
-        super().__init__(backbone, classifier, object_detection, bboxes2heatmap, 'image', is_adversarial)
-
-class EncoderOcclusionModel(OcclusionModel):
-    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, is_adversarial):
-        super().__init__(backbone, classifier, object_detection, bboxes2heatmap, 'encoder', is_adversarial)
-
-def Backbone():
-    # image 96x96 ----> grid 6x6 if [:-3]
-    # image 224x224 --> grid 7x7 if [:-2]
-    return torch.nn.Sequential(*list(torchvision.models.resnet50(weights='DEFAULT').children())[:-2])
-
-class Classifier(torch.nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.output = torch.nn.LazyLinear(num_classes)
-
-    def forward(self, x):
-        x = torch.sum(x, (2, 3))  # global pooling
-        return self.output(x)
 
 ########################### PROPOSALS ###########################
 
