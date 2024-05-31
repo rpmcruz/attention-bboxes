@@ -65,7 +65,7 @@ class Classifier(torch.nn.Module):
         self.output = torch.nn.LazyLinear(num_classes)
 
     def forward(self, x):
-        x = torch.sum(x, (2, 3))  # global pooling
+        x = torch.mean(x, (2, 3))  # global pooling
         return self.output(x)
 
 ####################### OBJ DETECT MODELS #######################
