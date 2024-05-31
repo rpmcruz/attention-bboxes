@@ -198,7 +198,7 @@ class Classifier(torch.nn.Module):
         self.output = torch.nn.LazyLinear(num_classes)
 
     def forward(self, x):
-        x = torch.sum(x, (2, 3))  # global pooling
+        x = torch.mean(x, (2, 3))  # global avg pooling
         return self.output(x)
 
 ########################### PROPOSALS ###########################
@@ -230,7 +230,6 @@ class GaussHeatmap(Heatmap):
     def f(self, x, x1, x2):
         stdev_eps = 1e-6
         avg = x1
-        # divided by 100 to make it smaller
         stdev = x2 + stdev_eps
         sqrt2pi = 2.5066282746310002
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
