@@ -18,21 +18,6 @@ class PointingGame(torchmetrics.Metric):
     def compute(self):
         return self.correct / self.total
 
-class GradCAM:
-    # Selvaraju, Ramprasaath R., et al. "Grad-CAM: Why did you say that?."
-    # arXiv preprint arXiv:1611.07450 (2016).
-    def fhook(self, module, args, output):
-        self.activation = output
-
-    def __call__(self, model, layer, x, y):
-        handle = layer.register_forward_hook(self.fhook)
-        ypred = model(x)
-        handle.remove()
-        grad_out = torch.zeros_like(self.activation)
-        grad = torch.autograd.grad([ypred[:, y].sum()], [self.activation], [grad_out])[0]
-        alpha = torch.mean(grad, (2, 3), True)
-        return torch.nn.functional.relu(torch.sum(alpha * self.activation, 1))
-
 class DegradationScore(torchmetrics.Metric):
     def __init__(self, model, score='acc'):
         super().__init__()
@@ -45,16 +30,15 @@ class DegradationScore(torchmetrics.Metric):
         self.add_state('count', default=torch.tensor(0), dist_reduce_fx='sum')
 
     def update(self, images, true_classes, heatmaps):
-        for image, true_class, heatmap in zip(images, true_classes, heatmaps):
-            lerf = self.degradation_curve('lerf', self.model, self.score, image, true_class, heatmap)
-            morf = self.degradation_curve('morf', self.model, self.score, image, true_class, heatmap)
-            self.areas += (lerf - morf).mean()
+        lerf = self.degradation_curve('lerf', self.model, self.score, images, true_classes, heatmaps)
+        morf = self.degradation_curve('morf', self.model, self.score, images, true_classes, heatmaps)
+        self.areas += torch.sum(torch.mean(lerf - morf, 1))
         self.count += len(images)
 
     def compute(self):
         return self.areas / self.count
 
-    def degradation_curve(self, curve_type, model, score_fn, image, true_class, heatmap):
+    def degradation_curve(self, curve_type, model, score_fn, images, true_classes, heatmaps):
         # Given an explanation map, occlude by 8x8 creating two curves: least
         # relevant removed first (LeRF) and most relevant removed first (MoRF),
         # where the score is computed for a given metric. The result is the area
@@ -62,19 +46,22 @@ class DegradationScore(torchmetrics.Metric):
         # Schulz, Karl, et al. "Restricting the flow: Information bottlenecks for
         # attribution." arXiv preprint arXiv:2001.00396 (2020).
         assert curve_type in ['lerf', 'morf']
-        assert len(image.shape) == 3
-        assert len(heatmap.shape) == 3 and heatmap.shape[0] == 1
-        heatmap = heatmap[0]
+        assert len(images.shape) == 4
+        assert len(heatmaps.shape) == 4 and heatmaps.shape[1] == 1
         descending = curve_type == 'morf'
-        ix = torch.argsort(heatmap.view(-1), descending=descending)[:-1]
-        cc = ix % heatmap.shape[1]
-        rr = ix // heatmap.shape[1]
-        xscale = image.shape[2] // heatmap.shape[1]
-        yscale = image.shape[1] // heatmap.shape[0]
-        # create occlusions covered by the heatmap
-        occlusions = image[None].repeat(len(ix), 1, 1, 1)
-        for i, (c, r) in enumerate(zip(cc, rr)):
-            occlusions[i:, c*yscale:(c+1)*yscale, r*xscale:(r+1)*xscale] = 0
+        ix = torch.argsort(heatmaps.view(len(heatmaps), -1), descending=descending)[:, :-1]
+        cc = ix % heatmaps.shape[2]
+        rr = ix // heatmaps.shape[2]
+        xscale = images.shape[3] // heatmaps.shape[3]
+        yscale = images.shape[2] // heatmaps.shape[2]
+        occlusions = torch.repeat_interleave(images, ix.shape[1], 0)
+        occlusions = occlusions.reshape(images.shape[0], ix.shape[1], *images.shape[1:])
+        for j in range(len(images)):
+            for i, (c, r) in enumerate(zip(cc[j], rr[j])):
+                occlusions[j, i:, c*yscale:(c+1)*yscale, r*xscale:(r+1)*xscale] = 0
+        occlusions = occlusions.reshape(-1, *images.shape[1:])
         with torch.no_grad():
             ypred = model(occlusions)['class'].argmax(1)
-        return score_fn(ypred, true_class)
+        ypred = ypred.reshape(len(images), -1)
+        ret = score_fn(ypred, true_classes[:, None])
+        return ret

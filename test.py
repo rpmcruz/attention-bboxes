@@ -11,6 +11,7 @@ args = parser.parse_args()
 import torch
 from torchvision.transforms import v2
 import torchmetrics
+from tqdm import tqdm
 import data, metrics, utils
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -23,7 +24,7 @@ transforms = v2.Compose([
 # we are testing with the train-set itself for now
 ds = getattr(data, args.dataset)
 ts = ds('/data/toys', 'test', transforms)
-ts = torch.utils.data.DataLoader(ts, 1, num_workers=4, pin_memory=True)
+ts = torch.utils.data.DataLoader(ts, 8, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
 
@@ -36,7 +37,7 @@ pg = metrics.PointingGame().to(device)
 deg_score = metrics.DegradationScore(model).to(device)
 
 model.eval()
-for x, mask, y in ts:
+for x, mask, y in tqdm(ts):
     x = x.to(device)
     mask = mask.to(device)
     y = y.to(device)
@@ -45,9 +46,9 @@ for x, mask, y in ts:
         acc.update(pred['class'].argmax(1), y)
         if 'heatmap' in pred:
             pg.update(pred['heatmap'], mask)
-            #deg_score.update(x, y, pred['heatmap'])
+            deg_score.update(x, y, pred['heatmap'])
     if args.visualize:
         utils.draw_bboxes(f'{args.model}-bboxes.png', x[0], pred['bboxes'][0].detach(), args.nstdev)
         utils.draw_heatmap(f'{args.model}-heatmap.png', x[0], pred['heatmap'][0].detach())
 
-print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}')#, f'{deg_score.compute().item()*100:.1f}')
+print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}', f'{deg_score.compute().item()*100:.1f}')
