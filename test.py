@@ -35,6 +35,7 @@ model = torch.load(args.model, map_location=device)
 acc = torchmetrics.classification.MulticlassAccuracy(ds.num_classes).to(device)
 pg = metrics.PointingGame().to(device)
 deg_score = metrics.DegradationScore(model).to(device)
+entropy = metrics.Entropy().to(device)
 
 model.eval()
 for x, mask, y in tqdm(ts):
@@ -47,8 +48,9 @@ for x, mask, y in tqdm(ts):
         if 'heatmap' in pred:
             pg.update(pred['heatmap'], mask)
             deg_score.update(x, y, pred['heatmap'])
+            entropy.update(pred['heatmap'])
     if args.visualize:
         utils.draw_bboxes(f'{args.model}-bboxes.png', x[0], pred['bboxes'][0].detach(), args.nstdev)
         utils.draw_heatmap(f'{args.model}-heatmap.png', x[0], pred['heatmap'][0].detach())
 
-print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}', f'{deg_score.compute().item()*100:.1f}')
+print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}', f'{deg_score.compute().item()*100:.1f}', f'{entropy.compute().item()*100:.1f}')
