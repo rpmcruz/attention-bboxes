@@ -2,6 +2,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('model')
 parser.add_argument('dataset')
+parser.add_argument('--captum')
 parser.add_argument('--bbox-confidence', type=float, default=0.5)
 parser.add_argument('--top-bboxes', type=int)
 parser.add_argument('--deviation-confidence', type=float, default=1.5)
@@ -30,6 +31,20 @@ ts = torch.utils.data.DataLoader(ts, 8, num_workers=4, pin_memory=True)
 
 model = torch.load(args.model, map_location=device)
 
+########################### BASELINES ###########################
+
+baseline_heatmap = None
+if args.captum == 'IntegratedGradients':
+    from captum.attr import IntegratedGradients
+    ig = IntegratedGradients(model)
+    def baseline_heatmap(x, y):
+        return ig.attribute(x, target=y)
+if args.captum == 'GuidedGradCAM':
+    from captum.attr import GuidedGradCam
+    ggc = GuidedGradCam(model, model.layer4)
+    def baseline_heatmap(x, y):
+        return ggc.attribute(x, y)
+
 ############################# LOOP #############################
 
 acc = torchmetrics.classification.MulticlassAccuracy(ds.num_classes).to(device)
@@ -45,6 +60,8 @@ for x, mask, y in tqdm(ts):
     with torch.no_grad():
         pred = model(x)
         acc.update(pred['class'].argmax(1), y)
+        if baseline_heatmap != None:
+            pred['heatmap'] = baseline_heatmap(x, y)
         if 'heatmap' in pred:
             pg.update(pred['heatmap'], mask)
             deg_score.update(x, y, pred['heatmap'])
