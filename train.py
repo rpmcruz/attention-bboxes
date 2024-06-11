@@ -78,10 +78,17 @@ for epoch in range(args.epochs):
         opt.step()
         if args.protopnet:
             model.backbone.eval()
+            pred = model(x)
             # (stage2) projection of prototypes
-            
+            stage2_projection(model, pred['min_features'])
             # (stage3) convex optimization of last layer
+            loss2 = torch.nn.functional.cross_entropy(pred['class'], y)
+            loss2 += stage3_loss(model)
             model.backbone.train()
+            opt2.zero_grad()
+            loss2.backward()
+            opt2.step()
+            loss += loss2
         if args.adversarial:
             # temporarily disable gradients for backbone and classifier
             for module in [backbone, classifier]:
