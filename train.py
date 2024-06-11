@@ -1,7 +1,8 @@
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('output')
-parser.add_argument('dataset')
+parser.add_argument('dataset', choices=['Birds', 'StanfordCars', 'StanfordDogs'])
+parser.add_argument('--protopnet', action='store_true')
 parser.add_argument('--detection', choices=['OneStage', 'FCOS', 'DETR'])
 parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'])
 parser.add_argument('--epochs', type=int, default=100)
@@ -17,7 +18,7 @@ assert (args.detection == None) == (args.heatmap == None), 'Must enable both or 
 import torch
 from torchvision.transforms import v2
 from time import time
-import data, models, utils
+import data, models, utils, protopnet
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 ############################# DATA #############################
@@ -39,14 +40,20 @@ classifier = models.Classifier(ds.num_classes)
 detection = getattr(models, args.detection)() if args.detection else None
 heatmap = getattr(models, args.heatmap)() if args.heatmap else None
 
-if detection is None or args.occlusion == 'none':
+if args.protopnet:
+    model = protopnet.ProtoPNet(backbone, ds.num_classes)
+elif detection is None or args.occlusion == 'none':
     model = models.SimpleModel(backbone, classifier)
 elif args.occlusion == 'encoder':
     model = models.EncoderOcclusionModel(backbone, classifier, detection, heatmap, args.adversarial)
 else:  # image
     model = models.ImageOcclusionModel(backbone, classifier, detection, heatmap, args.adversarial)
 model.to(device)
-opt = torch.optim.Adam(model.parameters())
+if args.protopnet:
+    opt = torch.optim.Adam(list(model.backbone.parameters()) + list(model.prototype_layer.parameters()))
+    opt2 = torch.optim.Adam(model.fc_layer.parameters())
+else:
+    opt = torch.optim.Adam(model.parameters())
 
 ############################# LOOP #############################
 
@@ -62,10 +69,19 @@ for epoch in range(args.epochs):
         y = y.to(device)
         pred = model(x)
         loss = torch.nn.functional.cross_entropy(pred['class'], y)
+        if args.protopnet:
+            loss += protopnet.prototypes_loss(pred['min_distances_per_class'], y, model)
         if 'heatmap' in pred:
-            loss = loss + (args.penalty * pred['heatmap'].mean())
+            loss += args.penalty * pred['heatmap'].mean()
         opt.zero_grad()
         loss.backward(retain_graph=args.adversarial)
+        opt.step()
+        if args.protopnet:
+            model.backbone.eval()
+            # (stage2) projection of prototypes
+            
+            # (stage3) convex optimization of last layer
+            model.backbone.train()
         if args.adversarial:
             # temporarily disable gradients for backbone and classifier
             for module in [backbone, classifier]:
@@ -78,7 +94,6 @@ for epoch in range(args.epochs):
                 for param in module.parameters():
                     param.requires_grad = True
             avg_adv_loss += float(adv_loss) / len(tr)
-        opt.step()
         avg_loss += float(loss) / len(tr)
         avg_acc += (y == pred['class'].argmax(1)).float().mean() / len(tr)
         if 'heatmap' in pred:
