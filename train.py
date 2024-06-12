@@ -3,14 +3,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument('output')
 parser.add_argument('dataset', choices=['Birds', 'StanfordCars', 'StanfordDogs'])
 parser.add_argument('--protopnet', action='store_true')
-parser.add_argument('--detection', choices=['OneStage', 'FCOS', 'DETR'])
+parser.add_argument('--vit', action='store_true')
+parser.add_argument('--detection', choices=['FasterRCNN', 'FCOS', 'DETR'])
 parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'])
-parser.add_argument('--epochs', type=int, default=100)
-parser.add_argument('--batchsize', type=int, default=8)
 parser.add_argument('--penalty', type=float, default=0)
 parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--occlusion', default='encoder', choices=['none', 'encoder', 'image'])
 parser.add_argument('--adversarial', action='store_true')
+parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--batchsize', type=int, default=8)
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 assert (args.detection == None) == (args.heatmap == None), 'Must enable both or neither detection/heatmap'
@@ -18,7 +19,8 @@ assert (args.detection == None) == (args.heatmap == None), 'Must enable both or 
 import torch
 from torchvision.transforms import v2
 from time import time
-import data, models, utils, protopnet
+import data, models, utils
+import baseline_protopnet, baseline_vit
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 ############################# DATA #############################
@@ -41,7 +43,9 @@ detection = getattr(models, args.detection)() if args.detection else None
 heatmap = getattr(models, args.heatmap)() if args.heatmap else None
 
 if args.protopnet:
-    model = protopnet.ProtoPNet(backbone, ds.num_classes)
+    model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
+elif args.vit:
+    model = baseline_vit.ViT(ds.num_classes)
 elif detection is None or args.occlusion == 'none':
     model = models.SimpleModel(backbone, classifier)
 elif args.occlusion == 'encoder':
@@ -61,6 +65,8 @@ model.train()
 for epoch in range(args.epochs):
     tic = time()
     avg_loss = 0
+    avg_sparsity = 0
+    avg_bbox_size = 0
     avg_adv_loss = 0
     avg_acc = 0
     avg_pg = 0
@@ -70,9 +76,13 @@ for epoch in range(args.epochs):
         pred = model(x)
         loss = torch.nn.functional.cross_entropy(pred['class'], y)
         if args.protopnet:
-            loss += protopnet.prototypes_loss(pred['min_distances_per_class'], y, model)
+            loss += baseline_protopnet.stage1_loss(pred['min_distances_per_class'], y)
         if 'heatmap' in pred:
             loss += args.penalty * pred['heatmap'].mean()
+            normalized_heatmap = pred['heatmap'] / torch.sum(pred['heatmap'], (1, 2), True)
+            avg_sparsity += float(torch.mean(-normalized_heatmap*torch.log2(normalized_heatmap))) / len(tr)
+        if 'bboxes' in pred:
+            avg_bbox_size += float(torch.mean(pred['bboxes'][:, 2:])) / len(tr)
         opt.zero_grad()
         loss.backward(retain_graph=args.adversarial)
         opt.step()
@@ -80,10 +90,10 @@ for epoch in range(args.epochs):
             model.backbone.eval()
             pred = model(x)
             # (stage2) projection of prototypes
-            stage2_projection(model, pred['min_features'])
+            baseline_protopnet.stage2_projection(model, pred['min_features'])
             # (stage3) convex optimization of last layer
             loss2 = torch.nn.functional.cross_entropy(pred['class'], y)
-            loss2 += stage3_loss(model)
+            loss2 += baseline_protopnet.stage3_loss(model)
             model.backbone.train()
             opt2.zero_grad()
             loss2.backward()
@@ -105,10 +115,11 @@ for epoch in range(args.epochs):
         avg_acc += (y == pred['class'].argmax(1)).float().mean() / len(tr)
         if 'heatmap' in pred:
             masks = masks.to(device)
-            heatmaps = torch.nn.functional.interpolate(pred['heatmap'], masks.shape[-2:], mode='nearest-exact')
+            heatmaps = pred['heatmap'][:, None]
+            heatmaps = torch.nn.functional.interpolate(heatmaps, masks.shape[-2:], mode='nearest-exact')
             avg_pg += float(torch.mean((masks.view(len(masks), -1)[range(len(masks)), torch.argmax(heatmaps.view(len(heatmaps), -1), 1)] != 0).float())) / len(tr)
     toc = time()
-    print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}' + (f' - Avg adversarial loss: {avg_adv_loss}' if args.adversarial else '') + f' - Avg pg: {avg_pg}')
+    print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}' + (f' - Avg adversarial loss: {avg_adv_loss}' if args.adversarial else '') + f' - Avg pg: {avg_pg} - Avg sparsity: {avg_sparsity} - Avg bbox size: {avg_bbox_size}')
     if args.debug:
         utils.draw_bboxes(f'epoch-{epoch+1}-bboxes.png', x[0], pred['bboxes'][0].detach(), args.nstdev)
         utils.draw_heatmap(f'epoch-{epoch+1}-heatmap.png', x[0], pred['heatmap'][0].detach())

@@ -9,7 +9,7 @@ class PointingGame(torchmetrics.Metric):
         self.add_state('total', default=torch.tensor(0), dist_reduce_fx='sum')
 
     def update(self, preds, target):
-        preds = torch.nn.functional.interpolate(preds, target.shape[-2:], mode='nearest-exact')
+        preds = torch.nn.functional.interpolate(preds[:, None], target.shape[-2:], mode='nearest-exact')
         preds = preds.view(len(preds), -1)
         target = target.view(len(target), -1)
         self.correct += sum(target[range(len(target)), torch.argmax(preds, 1)] != 0)
@@ -30,8 +30,8 @@ class DegradationScore(torchmetrics.Metric):
         self.add_state('count', default=torch.tensor(0), dist_reduce_fx='sum')
 
     def update(self, images, true_classes, heatmaps):
-        lerf = self.degradation_curve('lerf', self.model, self.score, images, true_classes, heatmaps)
-        morf = self.degradation_curve('morf', self.model, self.score, images, true_classes, heatmaps)
+        lerf = self.degradation_curve('lerf', self.model, self.score, images, true_classes, heatmaps[:, None])
+        morf = self.degradation_curve('morf', self.model, self.score, images, true_classes, heatmaps[:, None])
         self.areas += torch.sum(torch.mean(lerf - morf, 1))
         self.count += len(images)
 
@@ -70,11 +70,12 @@ class Entropy(torchmetrics.Metric):
     # to measure how sparse the explanation is
     def __init__(self):
         super().__init__()
-        self.add_state('entropy', default=torch.tensor(0), dist_reduce_fx='sum')
+        self.add_state('entropy', default=torch.tensor(0.), dist_reduce_fx='sum')
         self.add_state('total', default=torch.tensor(0), dist_reduce_fx='sum')
 
     def update(self, heatmap):
-        self.entropy += sum(-heatmap*torch.log(heatmap))
+        heatmap = heatmap / torch.sum(heatmap, (1, 2), True)
+        self.entropy += torch.sum(-heatmap*torch.log2(heatmap))
         self.total += heatmap.numel()
 
     def compute(self):

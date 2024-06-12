@@ -64,7 +64,7 @@ for x, mask, y in tqdm(ts):
             pred['heatmap'] = baseline_heatmap(x, y)
         if 'heatmap' in pred:
             pg.update(pred['heatmap'], mask)
-            deg_score.update(x, y, pred['heatmap'])
+            #deg_score.update(x, y, pred['heatmap'])
             entropy.update(pred['heatmap'])
     if args.visualize:
         utils.draw_bboxes(f'{args.model}-bboxes.png', x[0], pred['bboxes'][0].detach(), args.nstdev)
