@@ -18,7 +18,7 @@ def draw_bboxes(image, bboxes, nstdev=1):
 
 def draw_heatmap(image, heatmap):
     hue = 1-heatmap
-    hue = torch.nn.functional.interpolate(hue[None], image.shape[1:], mode='nearest-exact')[0]
-    hue = torch.cat((torch.ones_like(hue), hue, hue), 0)
+    hue = torch.nn.functional.interpolate(hue[None, None], image.shape[1:], mode='nearest-exact')[0, 0]
+    hue = torch.stack((torch.ones_like(hue), hue, hue))
     show = 0.5*image + 0.5*hue
     plt.imshow(show.cpu().permute(1, 2, 0))

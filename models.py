@@ -96,7 +96,9 @@ class Simple(torch.nn.Module):  # simple, debug model
             torch.arange((W/w)/2, W, W/w, device=grid.device),
             torch.arange((H/h)/2, H, H/h, device=grid.device),
             indexing='xy')
-        bboxes = torch.stack((xx[None], yy[None], bboxes[:, 0], bboxes[:, 1]), 1)
+        bboxes = torch.stack((
+            xx[None].repeat(len(grid), 1, 1), yy[None].repeat(len(grid), 1, 1),
+            bboxes[:, 0], bboxes[:, 1]), 1)
         bboxes = torch.flatten(bboxes, 2)
         scores = self.scores(grid)
         scores = torch.flatten(scores, 1)

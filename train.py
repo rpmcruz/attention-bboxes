@@ -125,16 +125,19 @@ for epoch in range(args.epochs):
     if args.debug:
         with torch.no_grad():
             x, _, y = debug_batch
-            x = x.to(device)
-            y = y.to(device)
+            x = x[:4].to(device)
+            y = y[:4].to(device)
             pred = model(x)
         import matplotlib.pyplot as plt
+        plt.rcParams['figure.figsize'] = (18, 8)
         plt.clf()
         for i in range(4):
             plt.subplot(2, 4, i+1)
             utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), args.nstdev)
+            plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
             plt.subplot(2, 4, i+4+1)
             utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
+        plt.suptitle(f'{args.output[:-4]} epoch={epoch+1}')
         plt.savefig(f'{args.output}-epoch-{epoch+1}.png')
 
 torch.save(model.cpu(), args.output)
