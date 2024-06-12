@@ -80,42 +80,28 @@ class Classifier(torch.nn.Module):
 ####################### OBJ DETECT MODELS #######################
 # output format = xywh
 
-class OneStage(torch.nn.Module):  # simple, debug model
-    def __init__(self, use_softmax=True, bboxes_normalized=False):
+class Simple(torch.nn.Module):  # simple, debug model
+    def __init__(self, use_softmax=False):
         super().__init__()
-        self.bboxes = torch.nn.LazyConv2d(4, 1)
+        self.bboxes = torch.nn.LazyConv2d(2, 1)
         self.scores = torch.nn.LazyConv2d(1, 1)
         self.use_softmax = use_softmax
-        self.bboxes_normalized = bboxes_normalized
 
-    def forward(self, grid):
-        device = grid.device
-        bboxes = self.bboxes(grid)
+    def forward(self, images, features):
+        grid = features[-1]
+        _, _, H, W = images.shape
+        _, _, h, w = grid.shape
+        bboxes = torch.nn.functional.softplus(self.bboxes(grid))
+        xx, yy = torch.meshgrid(
+            torch.arange((W/w)/2, W, W/w, device=grid.device),
+            torch.arange((H/h)/2, H, H/h, device=grid.device),
+            indexing='xy')
+        bboxes = torch.stack((xx[None], yy[None], bboxes[:, 0], bboxes[:, 1]), 1)
+        bboxes = torch.flatten(bboxes, 2)
         scores = self.scores(grid)
-        if self.bboxes_normalized:
-            bboxes = torch.sigmoid(bboxes)
-            xstep = 1/grid.shape[3]
-            ystep = 1/grid.shape[2]
-            xx = torch.arange(0, 1, xstep, device=device)
-            yy = torch.arange(0, 1, ystep, device=device)
-        else:
-            bboxes = torch.stack((
-                torch.sigmoid(bboxes[:, 0]), torch.sigmoid(bboxes[:, 1]),
-                torch.nn.functional.softplus(bboxes[:, 2]),
-                torch.nn.functional.softplus(bboxes[:, 3]),
-            ), 1)
-            xstep = ystep = 1
-            xx = torch.arange(grid.shape[3], device=device)
-            yy = torch.arange(grid.shape[2], device=device)
-        xx, yy = torch.meshgrid(xx, yy, indexing='xy')
-        bboxes = torch.stack((
-            xx + bboxes[:, 0]*xstep,
-            yy + bboxes[:, 1]*ystep,
-            bboxes[:, 2], bboxes[:, 3]
-        ), 1)
         scores = torch.flatten(scores, 1)
         scores = torch.softmax(scores, 1) if self.use_softmax else torch.sigmoid(scores)
-        return torch.flatten(bboxes, 2), scores
+        return bboxes, scores
 
 class FasterRCNN(torch.nn.Module):
     # https://arxiv.org/abs/1506.01497
