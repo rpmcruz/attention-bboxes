@@ -61,6 +61,8 @@ else:
 
 ############################# LOOP #############################
 
+debug_batch = next(iter(tr))
+
 model.train()
 for epoch in range(args.epochs):
     tic = time()
@@ -121,7 +123,18 @@ for epoch in range(args.epochs):
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}' + (f' - Avg adversarial loss: {avg_adv_loss}' if args.adversarial else '') + f' - Avg pg: {avg_pg} - Avg sparsity: {avg_sparsity} - Avg bbox size: {avg_bbox_size}')
     if args.debug:
-        utils.draw_bboxes(f'epoch-{epoch+1}-bboxes.png', x[0], pred['bboxes'][0].detach(), args.nstdev)
-        utils.draw_heatmap(f'epoch-{epoch+1}-heatmap.png', x[0], pred['heatmap'][0].detach())
+        with torch.no_grad():
+            x, _, y = debug_batch
+            x = x.to(device)
+            y = y.to(device)
+            pred = model(x)
+        import matplotlib.pyplot as plt
+        plt.clf()
+        for i in range(4):
+            plt.subplot(2, 4, i+1)
+            utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), args.nstdev)
+            plt.subplot(2, 4, i+4+1)
+            utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
+        plt.savefig(f'{args.output}-epoch-{epoch+1}.png')
 
 torch.save(model.cpu(), args.output)
