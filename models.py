@@ -18,10 +18,10 @@ class OcclusionModel(torch.nn.Module):
         embed = features[-1]
         if self.occlusion_level == 'none':
             return {'class': self.classifier(embed)}
-        bboxes, scores = self.object_detection(images, features)
+        bboxes, scores = self.object_detection(features)
         heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
         scale = embed.shape[-1] / images.shape[-1]
-        heatmap = self.bboxes2heatmap(scale, heatmap_shape, bboxes, scores)
+        heatmap = self.bboxes2heatmap(heatmap_shape, bboxes, scores)
         if self.is_adversarial:
             if self.occlusion_level == 'encoder':
                 min_embed = heatmap[:, None] * embed
@@ -78,31 +78,26 @@ class Classifier(torch.nn.Module):
         return self.output(x)
 
 ####################### OBJ DETECT MODELS #######################
-# output format = xywh
+# output format = xywh (normalized 0-1)
 
 class Simple(torch.nn.Module):  # simple, debug model
-    def __init__(self, use_softmax=False):
+    def __init__(self):
         super().__init__()
         self.bboxes = torch.nn.LazyConv2d(2, 1)
         self.scores = torch.nn.LazyConv2d(1, 1)
-        self.use_softmax = use_softmax
 
-    def forward(self, images, features):
+    def forward(self, features):
         grid = features[-1]
-        _, _, H, W = images.shape
         _, _, h, w = grid.shape
-        bboxes = torch.nn.functional.softplus(self.bboxes(grid))
         xx, yy = torch.meshgrid(
-            torch.arange((W/w)/2, W, W/w, device=grid.device),
-            torch.arange((H/h)/2, H, H/h, device=grid.device),
+            torch.arange(0, 1, 1/w, device=grid.device),
+            torch.arange(0, 1, 1/h, device=grid.device),
             indexing='xy')
-        bboxes = torch.stack((
+        bboxes = torch.sigmoid(self.bboxes(grid))
+        bboxes = torch.flatten(torch.stack((
             xx[None].repeat(len(grid), 1, 1), yy[None].repeat(len(grid), 1, 1),
-            bboxes[:, 0], bboxes[:, 1]), 1)
-        bboxes = torch.flatten(bboxes, 2)
-        scores = self.scores(grid)
-        scores = torch.flatten(scores, 1)
-        scores = torch.softmax(scores, 1) if self.use_softmax else torch.sigmoid(scores)
+            bboxes[:, 0], bboxes[:, 1]), 1), 2)
+        scores = torch.flatten(self.scores(grid), 1)
         return bboxes, scores
 
 class FasterRCNN(torch.nn.Module):
@@ -164,7 +159,7 @@ class FasterRCNN(torch.nn.Module):
         # classifier
         rois = torch.mean(rois, [-1, -2])
         scores = self.clf_head(torch.nn.functional.relu(self.clf_dropout(self.clf_hidden(rois))))
-        scores = torch.sigmoid(scores)[..., 0]
+        scores = scores[..., 0]
         return bboxes, scores
 
 class FCOS(torch.nn.Module):
@@ -247,7 +242,7 @@ class DETR(torch.nn.Module):
             self.row_embed[:H, None].repeat(1, W, 1),
         ], -1).flatten(0, 1)[None]
         h = self.transformer(pos + h.flatten(2).permute(0, 2, 1), self.query_pos[None].repeat(N, 1, 1))
-        scores = torch.sigmoid(self.scores(h))[:, 0]
+        scores = self.scores(h)[:, 0]
         scale = torch.tensor((images.shape[3], images.shape[2], images.shape[3], images.shape[2]), device=images.device)[None]
         bboxes = torch.sigmoid(self.bboxes(h)) * scale
         return bboxes, scores
@@ -255,28 +250,27 @@ class DETR(torch.nn.Module):
 ########################### PROPOSALS ###########################
 
 class Heatmap(torch.nn.Module):
-    def forward(self, scale, output_shape, bboxes, scores):
+    def forward(self, output_shape, bboxes, scores):
         device = bboxes.device
         xx = torch.arange(output_shape[1], device=device)
         yy = torch.arange(output_shape[0], device=device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
-        bboxes = scale*bboxes
+        scale = torch.tensor([output_shape[1], output_shape[0]]*2, device=bboxes.device)
+        bboxes = scale[None, :, None]*bboxes
         xprob = self.f(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None])
         yprob = self.f(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None])
         # avoid the pdf being too big for a single pixel
-        probs = torch.clamp(xprob*yprob, max=1)
-        # TODO: do softmax on scores
-        if scores is None:
-            return torch.mean(probs, 1)
-        #scores = scores / scores.max()
+        #probs = torch.clamp(xprob*yprob, max=1)
+        probs = xprob*yprob
+        scores = torch.softmax(scores, 1)
         heatmap = torch.sum(scores[..., None, None]*probs, 1)
+        heatmap = heatmap / torch.amax(heatmap, 1, True)  # ensure 0-1
         return heatmap
 
 class GaussHeatmap(Heatmap):
     def f(self, x, x1, x2):
-        stdev_eps = 1e-6
         avg = x1
-        stdev = x2 + stdev_eps
+        stdev = x2 + 1e-6
         sqrt2pi = (2*torch.pi)**0.5
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 

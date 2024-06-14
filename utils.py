@@ -2,23 +2,19 @@ import torch
 import matplotlib.pyplot as plt
 from matplotlib import patches
 
-def draw_bboxes(image, bboxes, nstdev=1):
+def draw_bboxes(image, bboxes, scores, nstdev=2):
     plt.imshow(image.cpu().permute(1, 2, 0))
-    bboxes = bboxes.cpu()
     # 68.27% of the data falls within 1 stddev of the mean
     # 86.64% of the data falls within 1.5 stddevs of the mean
     # 95.44% of the data falls within 2 stddevs of the mean
-    H = W = 1  # bboxes are already in absolute coordinates (i.e., not normalized)
-    bx = (bboxes[0]-bboxes[2]/2)*W
-    by = (bboxes[1]-bboxes[2]/2)*H
-    bw = bboxes[2]*W*nstdev
-    bh = bboxes[3]*H*nstdev
-    for x, y, w, h in zip(bx, by, bw, bh):
-        plt.gca().add_patch(patches.Rectangle((x, y), w, h, linewidth=1, edgecolor='r', facecolor='none'))
+    bboxes = bboxes.cpu() * torch.tensor([image.shape[2], image.shape[1]]*2)[:, None]
+    scores = torch.softmax(scores, 0)
+    scores = scores/scores.amax()
+    for (x, y, sw, sh), score in zip(bboxes.T, scores):
+        w, h = sw*nstdev, sh*nstdev
+        plt.gca().add_patch(patches.Rectangle((x, y), w, h, alpha=score.item(), linewidth=2, edgecolor='r', facecolor='none'))
 
 def draw_heatmap(image, heatmap):
-    hue = 1-heatmap
-    hue = torch.nn.functional.interpolate(hue[None, None], image.shape[1:], mode='nearest-exact')[0, 0]
-    hue = torch.stack((torch.ones_like(hue), hue, hue))
-    show = 0.5*image + 0.5*hue
+    heatmap = torch.nn.functional.interpolate(heatmap[None, None], image.shape[1:], mode='bilinear')[0]
+    show = image*heatmap
     plt.imshow(show.cpu().permute(1, 2, 0))

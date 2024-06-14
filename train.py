@@ -7,12 +7,13 @@ parser.add_argument('--vit', action='store_true')
 parser.add_argument('--detection', choices=['Simple', 'FasterRCNN', 'FCOS', 'DETR'])
 parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'])
 parser.add_argument('--penalty', type=float, default=0)
-parser.add_argument('--nstdev', type=float, default=1)
+parser.add_argument('--nstdev', type=float, default=2)
 parser.add_argument('--occlusion', default='encoder', choices=['none', 'encoder', 'image'])
 parser.add_argument('--adversarial', action='store_true')
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--batchsize', type=int, default=8)
-parser.add_argument('--debug', action='store_true')
+parser.add_argument('--visualize', action='store_true')
+parser.add_argument('--fast', action='store_true')
 args = parser.parse_args()
 assert (args.detection == None) == (args.heatmap == None), 'Must enable both or neither detection/heatmap'
 
@@ -33,6 +34,8 @@ transforms = v2.Compose([
 ])
 ds = getattr(data, args.dataset)
 tr = ds('/data/toys', 'train', transforms)
+if args.fast:
+    tr = torch.utils.data.Subset(tr, [0]*args.batchsize)
 tr = torch.utils.data.DataLoader(tr, args.batchsize, True, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
@@ -62,7 +65,7 @@ else:
 
 ############################# LOOP #############################
 
-debug_batch = next(iter(tr))
+visualize_batch = next(iter(tr))
 
 model.train()
 for epoch in range(args.epochs):
@@ -148,9 +151,9 @@ for epoch in range(args.epochs):
         model.backbone.train()
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}' + (f' - Avg adversarial loss: {avg_adv_loss}' if args.adversarial else '') + f' - Avg pg: {avg_pg} - Avg sparsity: {avg_sparsity} - Avg bbox size: {avg_bbox_size}')
-    if args.debug:
+    if args.visualize:
         with torch.no_grad():
-            x, _, y = debug_batch
+            x, _, y = visualize_batch
             x = x[:4].to(device)
             y = y[:4].to(device)
             pred = model(x)
@@ -159,7 +162,7 @@ for epoch in range(args.epochs):
         plt.clf()
         for i in range(4):
             plt.subplot(2, 4, i+1)
-            utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), args.nstdev)
+            utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
             plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
             plt.subplot(2, 4, i+4+1)
             utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
