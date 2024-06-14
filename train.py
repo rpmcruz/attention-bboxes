@@ -53,6 +53,7 @@ elif args.occlusion == 'encoder':
 else:  # image
     model = models.ImageOcclusionModel(backbone, classifier, detection, heatmap, args.adversarial)
 model.to(device)
+
 if args.protopnet:
     opt = torch.optim.Adam(list(model.backbone.parameters()) + list(model.prototype_layer.parameters()))
     opt2 = torch.optim.Adam(model.fc_layer.parameters())
@@ -78,8 +79,9 @@ for epoch in range(args.epochs):
         pred = model(x)
         loss = torch.nn.functional.cross_entropy(pred['class'], y)
         if args.protopnet:
-            loss += baseline_protopnet.stage1_loss(pred['min_distances_per_class'], y)
+            loss += baseline_protopnet.stage1_loss(model, pred['features'], y)
         if 'heatmap' in pred:
+            # FIXME: possibly use entropy here
             loss += args.penalty * pred['heatmap'].mean()
             normalized_heatmap = pred['heatmap'] / torch.sum(pred['heatmap'], (1, 2), True)
             avg_sparsity += float(torch.mean(-normalized_heatmap*torch.log2(normalized_heatmap))) / len(tr)
@@ -88,19 +90,6 @@ for epoch in range(args.epochs):
         opt.zero_grad()
         loss.backward(retain_graph=args.adversarial)
         opt.step()
-        if args.protopnet:
-            model.backbone.eval()
-            pred = model(x)
-            # (stage2) projection of prototypes
-            baseline_protopnet.stage2_projection(model, pred['min_features'])
-            # (stage3) convex optimization of last layer
-            loss2 = torch.nn.functional.cross_entropy(pred['class'], y)
-            loss2 += baseline_protopnet.stage3_loss(model)
-            model.backbone.train()
-            opt2.zero_grad()
-            loss2.backward()
-            opt2.step()
-            loss += loss2
         if args.adversarial:
             # temporarily disable gradients for backbone and classifier
             for module in [backbone, classifier]:
@@ -120,6 +109,43 @@ for epoch in range(args.epochs):
             heatmaps = pred['heatmap'][:, None]
             heatmaps = torch.nn.functional.interpolate(heatmaps, masks.shape[-2:], mode='nearest-exact')
             avg_pg += float(torch.mean((masks.view(len(masks), -1)[range(len(masks)), torch.argmax(heatmaps.view(len(heatmaps), -1), 1)] != 0).float())) / len(tr)
+    if args.protopnet:
+        # protopnet has two more stages: in the paper they do this after a few epochs
+        model.backbone.eval()
+        # (stage2) projection of prototypes
+        all_features = [[] for _ in range(ds.num_classes)]
+        all_distances = [[] for _ in range(ds.num_classes)]
+        for x, _, y in tr:
+            x = x.to(device)
+            y = y.to(device)
+            with torch.no_grad():
+                z = model.features(model.backbone(x)[-1])
+                z = torch.flatten(z, 2).permute(0, 2, 1)
+                for k in range(ds.num_classes):
+                    ix = y == k
+                    if ix.sum() > 0:
+                        zk = z[ix]
+                        pk = model.prototype_layer.prototypes[:, k]
+                        distances = torch.cdist(zk, pk)
+                        all_features[k].append(torch.flatten(zk, 0, 1))
+                        all_distances[k].append(torch.flatten(distances, 0, 1))
+        for k in range(ds.num_classes):
+            num_prototypes = model.prototype_layer.prototypes.shape[2]
+            ix = torch.argsort(torch.cat(all_distances[k]))
+            # projection
+            model.prototype_layer.prototypes[:, k] = torch.cat(all_features[k])[ix[:num_prototypes]]
+        # (stage3) convex optimization of last layer
+        for x, _, y in tr:
+            x = x.to(device)
+            y = y.to(device)
+            pred = model(x)
+            loss2 = torch.nn.functional.cross_entropy(pred['class'], y)
+            loss2 += baseline_protopnet.stage3_loss(model)
+            opt2.zero_grad()
+            loss2.backward()
+            opt2.step()
+        loss += float(loss2)
+        model.backbone.train()
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {avg_loss} - Avg acc: {avg_acc}' + (f' - Avg adversarial loss: {avg_adv_loss}' if args.adversarial else '') + f' - Avg pg: {avg_pg} - Avg sparsity: {avg_sparsity} - Avg bbox size: {avg_bbox_size}')
     if args.debug:

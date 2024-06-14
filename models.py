@@ -265,6 +265,7 @@ class Heatmap(torch.nn.Module):
         yprob = self.f(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None])
         # avoid the pdf being too big for a single pixel
         probs = torch.clamp(xprob*yprob, max=1)
+        # TODO: do softmax on scores
         if scores is None:
             return torch.mean(probs, 1)
         #scores = scores / scores.max()
