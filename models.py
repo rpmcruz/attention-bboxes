@@ -80,6 +80,14 @@ class Classifier(torch.nn.Module):
 ####################### OBJ DETECT MODELS #######################
 # output format = xywh (normalized 0-1)
 
+class Simplest(torch.nn.Module):  # simple, debug model
+    def __init__(self):
+        super().__init__()
+        self.conv = torch.nn.Conv2d(2048, 1, 3, padding=1)
+
+    def forward(self, features):
+        return self.conv(features[-1]), None
+
 class Simple(torch.nn.Module):  # simple, debug model
     def __init__(self):
         super().__init__()
@@ -248,6 +256,10 @@ class DETR(torch.nn.Module):
         return bboxes, scores
 
 ########################### PROPOSALS ###########################
+
+class NopHeatmap(torch.nn.Module):
+    def forward(self, output_shape, heatmap, _):
+        return torch.sigmoid(heatmap[:, 0])
 
 class Heatmap(torch.nn.Module):
     def forward(self, output_shape, bboxes, scores):
