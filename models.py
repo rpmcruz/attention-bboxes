@@ -1,13 +1,12 @@
-import torch
-import torchvision
+import torch, torchvision
 
 ############################# BASICS #############################
 
-class OcclusionModel(torch.nn.Module):
-    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, occlusion_level, is_adversarial):
+class Occlusion(torch.nn.Module):
+    def __init__(self, backbone, classifier, detection, bboxes2heatmap, occlusion_level, is_adversarial):
         super().__init__()
         self.backbone = backbone
-        self.object_detection = object_detection
+        self.detection = detection
         self.bboxes2heatmap = bboxes2heatmap
         self.classifier = classifier
         self.occlusion_level = occlusion_level
@@ -18,10 +17,12 @@ class OcclusionModel(torch.nn.Module):
         embed = features[-1]
         if self.occlusion_level == 'none':
             return {'class': self.classifier(embed)}
-        bboxes, scores = self.object_detection(features)
-        heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
-        scale = embed.shape[-1] / images.shape[-1]
-        heatmap = self.bboxes2heatmap(heatmap_shape, bboxes, scores)
+        det = self.detection(features)
+        if 'heatmap' not in det:
+            heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
+            scale = embed.shape[-1] / images.shape[-1]
+            det['heatmap'] = self.bboxes2heatmap(heatmap_shape, det['bboxes'], det['scores'])
+        heatmap = det['heatmap']
         if self.is_adversarial:
             if self.occlusion_level == 'encoder':
                 min_embed = heatmap[:, None] * embed
@@ -33,26 +34,13 @@ class OcclusionModel(torch.nn.Module):
                 'class': self.classifier(embed),
                 'min_class': self.classifier(min_embed),
                 'max_class': self.classifier(max_embed),
-                'heatmap': heatmap, 'bboxes': bboxes, 'scores': scores
+                **det
             }
         if self.occlusion_level == 'encoder':
             embed = heatmap[:, None] * embed
             return {
-                'class': self.classifier(embed),
-                'heatmap': heatmap, 'bboxes': bboxes, 'scores': scores
+                'class': self.classifier(embed), **det
             }
-
-class SimpleModel(OcclusionModel):
-    def __init__(self, backbone, classifier):
-        super().__init__(backbone, classifier, None, None, 'none', False)
-
-class ImageOcclusionModel(OcclusionModel):
-    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, is_adversarial):
-        super().__init__(backbone, classifier, object_detection, bboxes2heatmap, 'image', is_adversarial)
-
-class EncoderOcclusionModel(OcclusionModel):
-    def __init__(self, backbone, classifier, object_detection, bboxes2heatmap, is_adversarial):
-        super().__init__(backbone, classifier, object_detection, bboxes2heatmap, 'encoder', is_adversarial)
 
 class Backbone(torch.nn.Module):
     def __init__(self):
@@ -80,15 +68,18 @@ class Classifier(torch.nn.Module):
 ####################### OBJ DETECT MODELS #######################
 # output format = xywh (normalized 0-1)
 
-class Simplest(torch.nn.Module):  # simple, debug model
+class Heatmap(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.conv = torch.nn.Conv2d(2048, 1, 3, padding=1)
 
     def forward(self, features):
-        return self.conv(features[-1]), None
+        heatmap = self.conv(features[-1])
+        heatmap = torch.softmax(heatmap.reshape(len(heatmap), -1), 1).reshape(len(heatmap), heatmap.shape[2], heatmap.shape[3])
+        heatmap = heatmap / torch.amax(heatmap, (1, 2), True)
+        return {'heatmap': heatmap}
 
-class Simple(torch.nn.Module):  # simple, debug model
+class SimpleDet(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.bboxes = torch.nn.LazyConv2d(2, 1)
@@ -106,7 +97,7 @@ class Simple(torch.nn.Module):  # simple, debug model
             xx[None].repeat(len(grid), 1, 1), yy[None].repeat(len(grid), 1, 1),
             bboxes[:, 0], bboxes[:, 1]), 1), 2)
         scores = torch.flatten(self.scores(grid), 1)
-        return bboxes, scores
+        return {'bboxes': bboxes, 'scores': scores}
 
 class FasterRCNN(torch.nn.Module):
     # https://arxiv.org/abs/1506.01497
@@ -168,7 +159,7 @@ class FasterRCNN(torch.nn.Module):
         rois = torch.mean(rois, [-1, -2])
         scores = self.clf_head(torch.nn.functional.relu(self.clf_dropout(self.clf_hidden(rois))))
         scores = scores[..., 0]
-        return bboxes, scores
+        return {'bboxes': bboxes, 'scores': scores}
 
 class FCOS(torch.nn.Module):
     # implemented from scratch based on the paper
@@ -226,7 +217,7 @@ class FCOS(torch.nn.Module):
             _scores.append(torch.flatten(scores, 1))
         bboxes = torch.cat(_bboxes, 2)
         scores = torch.cat(_scores, 1)
-        return bboxes, scores
+        return {'bboxes': bboxes, 'scores': scores}
 
 class DETR(torch.nn.Module):
     # implementation from the paper
@@ -253,15 +244,11 @@ class DETR(torch.nn.Module):
         scores = self.scores(h)[:, 0]
         scale = torch.tensor((images.shape[3], images.shape[2], images.shape[3], images.shape[2]), device=images.device)[None]
         bboxes = torch.sigmoid(self.bboxes(h)) * scale
-        return bboxes, scores
+        return {'bboxes': bboxes, 'scores': scores}
 
 ########################### PROPOSALS ###########################
 
-class NopHeatmap(torch.nn.Module):
-    def forward(self, output_shape, heatmap, _):
-        return torch.sigmoid(heatmap[:, 0])
-
-class Heatmap(torch.nn.Module):
+class Bboxes2Heatmap(torch.nn.Module):
     def forward(self, output_shape, bboxes, scores):
         device = bboxes.device
         xx = torch.arange(output_shape[1], device=device)
@@ -279,14 +266,14 @@ class Heatmap(torch.nn.Module):
         heatmap = heatmap / torch.amax(heatmap, 1, True)  # ensure 0-1
         return heatmap
 
-class GaussHeatmap(Heatmap):
+class GaussHeatmap(Bboxes2Heatmap):
     def f(self, x, x1, x2):
         avg = x1
         stdev = x2 + 1e-6
         sqrt2pi = (2*torch.pi)**0.5
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
-class LogisticHeatmap(Heatmap):
+class LogisticHeatmap(Bboxes2Heatmap):
     def f(self, x, x1, x2):
         k = 1
         x1 = x1 - x2/2

@@ -2,10 +2,8 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('output')
 parser.add_argument('dataset', choices=['Birds', 'StanfordCars', 'StanfordDogs'])
-parser.add_argument('--protopnet', action='store_true')
-parser.add_argument('--vit', action='store_true')
-parser.add_argument('--detection', choices=['Simplest', 'Simple', 'FasterRCNN', 'FCOS', 'DETR'])
-parser.add_argument('--heatmap', choices=['NopHeatmap', 'GaussHeatmap', 'LogisticHeatmap'])
+parser.add_argument('model', choices=['ProtoPNet', 'ViT', 'OnlyClass', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR'])
+parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'], default='GaussHeatmap')
 parser.add_argument('--penalty', type=float, default=0)
 parser.add_argument('--nstdev', type=float, default=2)
 parser.add_argument('--occlusion', default='encoder', choices=['none', 'encoder', 'image'])
@@ -15,7 +13,6 @@ parser.add_argument('--batchsize', type=int, default=8)
 parser.add_argument('--visualize', action='store_true')
 parser.add_argument('--fast', action='store_true')
 args = parser.parse_args()
-assert (args.detection == None) == (args.heatmap == None), 'Must enable both or neither detection/heatmap'
 
 import torch
 from torchvision.transforms import v2
@@ -40,28 +37,27 @@ tr = torch.utils.data.DataLoader(tr, args.batchsize, True, num_workers=4, pin_me
 
 ############################# MODEL #############################
 
-backbone = models.Backbone()
-classifier = models.Classifier(ds.num_classes)
-detection = getattr(models, args.detection)() if args.detection else None
-heatmap = getattr(models, args.heatmap)() if args.heatmap else None
-
-if args.protopnet:
+if args.model == 'ProtoPNet':
+    backbone = models.Backbone()
     model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
-elif args.vit:
+elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
-elif detection is None or args.occlusion == 'none':
-    model = models.SimpleModel(backbone, classifier)
-elif args.occlusion == 'encoder':
-    model = models.EncoderOcclusionModel(backbone, classifier, detection, heatmap, args.adversarial)
-else:  # image
-    model = models.ImageOcclusionModel(backbone, classifier, detection, heatmap, args.adversarial)
+else:
+    backbone = models.Backbone()
+    classifier = models.Classifier(ds.num_classes)
+    detection = getattr(models, args.model)() if args.model != 'OnlyClass' else None
+    heatmap = getattr(models, args.heatmap)()
+    occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
+    model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
 model.to(device)
 
-if args.protopnet:
-    opt = torch.optim.Adam(list(model.backbone.parameters()) + list(model.prototype_layer.parameters()))
+if args.model == 'ProtoPNet':
+    backbone_opt = torch.optim.Adam(backbone.parameters(), 1e-4)
+    opt = torch.optim.Adam(model.prototype_layer.parameters())
     opt2 = torch.optim.Adam(model.fc_layer.parameters())
 else:
-    opt = torch.optim.Adam(model.parameters())
+    backbone_opt = torch.optim.Adam(backbone.parameters(), 1e-4)
+    opt = torch.optim.Adam(set(model.parameters()) - set(backbone.parameters()))
 
 ############################# LOOP #############################
 
@@ -81,18 +77,20 @@ for epoch in range(args.epochs):
         y = y.to(device)
         pred = model(x)
         loss = torch.nn.functional.cross_entropy(pred['class'], y)
-        if args.protopnet:
+        if args.model == 'ProtoPNet':
             loss += baseline_protopnet.stage1_loss(model, pred['features'], y)
         if 'heatmap' in pred:
-            # FIXME: possibly use entropy here
-            loss += args.penalty * pred['heatmap'].mean()
-            normalized_heatmap = pred['heatmap'] / torch.sum(pred['heatmap'], (1, 2), True)
-            avg_sparsity += float(torch.mean(-normalized_heatmap*torch.log2(normalized_heatmap))) / len(tr)
+            norm_heatmap = pred['heatmap'] / torch.sum(pred['heatmap'], (1, 2), True)
+            entropy = torch.mean(-norm_heatmap*torch.log2(norm_heatmap+1e-7))
+            loss += args.penalty * entropy
+            avg_sparsity += float(entropy) / len(tr)
         if 'bboxes' in pred:
             avg_bbox_size += float(torch.mean(pred['bboxes'][:, 2:])) / len(tr)
         opt.zero_grad()
+        backbone_opt.zero_grad()
         loss.backward(retain_graph=args.adversarial)
         opt.step()
+        backbone_opt.step()
         if args.adversarial:
             # temporarily disable gradients for backbone and classifier
             for module in [backbone, classifier]:
@@ -112,7 +110,7 @@ for epoch in range(args.epochs):
             heatmaps = pred['heatmap'][:, None]
             heatmaps = torch.nn.functional.interpolate(heatmaps, masks.shape[-2:], mode='nearest-exact')
             avg_pg += float(torch.mean((masks.view(len(masks), -1)[range(len(masks)), torch.argmax(heatmaps.view(len(heatmaps), -1), 1)] != 0).float())) / len(tr)
-    if args.protopnet:
+    if args.model == 'ProtoPNet':
         # protopnet has two more stages: in the paper they do this after a few epochs
         model.backbone.eval()
         # (stage2) projection of prototypes
@@ -162,9 +160,9 @@ for epoch in range(args.epochs):
         plt.clf()
         for i in range(4):
             plt.subplot(2, 4, i+1)
-            if args.detection != 'Simplest':
+            if 'bboxes' in pred:
                 utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
-                plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
+            plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
             plt.subplot(2, 4, i+4+1)
             utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
         plt.suptitle(f'{args.output[:-4]} epoch={epoch+1}')

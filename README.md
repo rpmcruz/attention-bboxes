@@ -39,3 +39,7 @@ Min_{encoder,classifier} Loss ; Max_{detection} Loss
 
 **Other interesting papers:**
 * [Beyond the Label Itself](https://arxiv.org/abs/2312.08234) proposes a formula to convert bounding boxes to heatmaps in a differentiable manner.
+
+**Observations:**
+
+ProtoPNet paper mentions that they are able to get 75-80% accuracy for the Birds dataset.
