@@ -3,9 +3,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('model')
 parser.add_argument('dataset')
 parser.add_argument('--captum')
-parser.add_argument('--bbox-confidence', type=float, default=0.5)
-parser.add_argument('--top-bboxes', type=int)
-parser.add_argument('--deviation-confidence', type=float, default=1.5)
+parser.add_argument('--nstdev', type=float, default=2)
 parser.add_argument('--visualize', action='store_true')
 args = parser.parse_args()
 
@@ -53,7 +51,7 @@ deg_score = metrics.DegradationScore(model).to(device)
 entropy = metrics.Entropy().to(device)
 
 model.eval()
-for x, mask, y in tqdm(ts):
+for i, (x, mask, y) in enumerate(tqdm(ts)):
     x = x.to(device)
     mask = mask.to(device)
     y = y.to(device)
@@ -66,8 +64,18 @@ for x, mask, y in tqdm(ts):
             pg.update(pred['heatmap'], mask)
             #deg_score.update(x, y, pred['heatmap'])
             entropy.update(pred['heatmap'])
-    if args.visualize:
-        utils.draw_bboxes(f'{args.model}-bboxes.png', x[0], pred['bboxes'][0].detach(), args.nstdev)
-        utils.draw_heatmap(f'{args.model}-heatmap.png', x[0], pred['heatmap'][0].detach())
+    if args.visualize and i == 0:
+        import matplotlib.pyplot as plt
+        plt.rcParams['figure.figsize'] = (18, 8)
+        plt.clf()
+        for i in range(4):
+            plt.subplot(2, 4, i+1)
+            if 'bboxes' in pred:
+                utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
+            plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
+            plt.subplot(2, 4, i+4+1)
+            utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
+        plt.suptitle(f'{args.model[:-4]}')
+        plt.savefig(f'{args.model}.png')
 
 print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}', f'{deg_score.compute().item()*100:.1f}', f'{entropy.compute().item()*100:.1f}')

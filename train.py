@@ -40,8 +40,13 @@ tr = torch.utils.data.DataLoader(tr, args.batchsize, True, num_workers=4, pin_me
 if args.model == 'ProtoPNet':
     backbone = models.Backbone()
     model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
+    slow_opt = torch.optim.Adam(backbone.parameters(), 1e-4)
+    fast_opt = torch.optim.Adam(model.prototype_layer.parameters())
+    late_opt = torch.optim.Adam(model.fc_layer.parameters())
 elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
+    slow_opt = torch.optim.Adam([], 1e-4)
+    fast_opt = torch.optim.Adam(model.parameters())
 else:
     backbone = models.Backbone()
     classifier = models.Classifier(ds.num_classes)
@@ -49,15 +54,9 @@ else:
     heatmap = getattr(models, args.heatmap)()
     occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
     model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
+    slow_opt = torch.optim.Adam(list(backbone.parameters()) + list(detection.parameters()), 1e-4)
+    fast_opt = torch.optim.Adam(classifier.parameters())
 model.to(device)
-
-if args.model == 'ProtoPNet':
-    backbone_opt = torch.optim.Adam(backbone.parameters(), 1e-4)
-    opt = torch.optim.Adam(model.prototype_layer.parameters())
-    opt2 = torch.optim.Adam(model.fc_layer.parameters())
-else:
-    backbone_opt = torch.optim.Adam(backbone.parameters(), 1e-4)
-    opt = torch.optim.Adam(set(model.parameters()) - set(backbone.parameters()))
 
 ############################# LOOP #############################
 
@@ -86,11 +85,11 @@ for epoch in range(args.epochs):
             avg_sparsity += float(entropy) / len(tr)
         if 'bboxes' in pred:
             avg_bbox_size += float(torch.mean(pred['bboxes'][:, 2:])) / len(tr)
-        opt.zero_grad()
-        backbone_opt.zero_grad()
+        fast_opt.zero_grad()
+        slow_opt.zero_grad()
         loss.backward(retain_graph=args.adversarial)
-        opt.step()
-        backbone_opt.step()
+        fast_opt.step()
+        slow_opt.step()
         if args.adversarial:
             # temporarily disable gradients for backbone and classifier
             for module in [backbone, classifier]:
@@ -142,9 +141,9 @@ for epoch in range(args.epochs):
             pred = model(x)
             loss2 = torch.nn.functional.cross_entropy(pred['class'], y)
             loss2 += baseline_protopnet.stage3_loss(model)
-            opt2.zero_grad()
+            late_opt.zero_grad()
             loss2.backward()
-            opt2.step()
+            late_opt.step()
         loss += float(loss2)
         model.backbone.train()
     toc = time()
