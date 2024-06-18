@@ -4,7 +4,8 @@ parser.add_argument('output')
 parser.add_argument('dataset', choices=['Birds', 'StanfordCars', 'StanfordDogs'])
 parser.add_argument('model', choices=['ProtoPNet', 'ViT', 'OnlyClass', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR'])
 parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'], default='GaussHeatmap')
-parser.add_argument('--penalty', type=float, default=0)
+parser.add_argument('--penalty-l1', type=float, default=0)
+parser.add_argument('--penalty-entropy', type=float, default=0)
 parser.add_argument('--nstdev', type=float, default=2)
 parser.add_argument('--occlusion', default='encoder', choices=['none', 'encoder', 'image'])
 parser.add_argument('--adversarial', action='store_true')
@@ -79,9 +80,11 @@ for epoch in range(args.epochs):
         if args.model == 'ProtoPNet':
             loss += baseline_protopnet.stage1_loss(model, pred['features'], y)
         if 'heatmap' in pred:
+            l1 = torch.mean(pred['heatmap'])
+            loss += args.penalty_l1 * l1
             norm_heatmap = pred['heatmap'] / torch.sum(pred['heatmap'], (1, 2), True)
             entropy = torch.mean(-norm_heatmap*torch.log2(norm_heatmap+1e-7))
-            loss += args.penalty * entropy
+            loss += args.penalty_entropy * entropy
             avg_sparsity += float(entropy) / len(tr)
         if 'bboxes' in pred:
             avg_bbox_size += float(torch.mean(pred['bboxes'][:, 2:])) / len(tr)

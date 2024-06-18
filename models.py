@@ -263,7 +263,7 @@ class Bboxes2Heatmap(torch.nn.Module):
         probs = xprob*yprob
         scores = torch.softmax(scores, 1)
         heatmap = torch.sum(scores[..., None, None]*probs, 1)
-        heatmap = heatmap / torch.amax(heatmap, 1, True)  # ensure 0-1
+        heatmap = heatmap / torch.amax(heatmap, [1, 2], True)  # ensure 0-1
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):
