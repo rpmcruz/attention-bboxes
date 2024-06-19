@@ -89,8 +89,8 @@ class SimpleDet(torch.nn.Module):
         grid = features[-1]
         _, _, h, w = grid.shape
         xx, yy = torch.meshgrid(
-            torch.arange(1/w, 1, 1/w, device=grid.device),
-            torch.arange(1/h, 1, 1/h, device=grid.device),
+            torch.arange((1/w)/2, 1, 1/w, device=grid.device),
+            torch.arange((1/h)/2, 1, 1/h, device=grid.device),
             indexing='xy')
         bboxes = torch.sigmoid(self.bboxes(grid))
         bboxes = torch.flatten(torch.stack((
