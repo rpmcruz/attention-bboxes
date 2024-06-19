@@ -66,7 +66,7 @@ class Classifier(torch.nn.Module):
         return self.output(x)
 
 ####################### OBJ DETECT MODELS #######################
-# output format = xywh (normalized 0-1)
+# output format = cxcywh (normalized 0-1)
 
 class Heatmap(torch.nn.Module):
     def __init__(self):
@@ -89,8 +89,8 @@ class SimpleDet(torch.nn.Module):
         grid = features[-1]
         _, _, h, w = grid.shape
         xx, yy = torch.meshgrid(
-            torch.arange(0, 1, 1/w, device=grid.device),
-            torch.arange(0, 1, 1/h, device=grid.device),
+            torch.arange(1/w, 1, 1/w, device=grid.device),
+            torch.arange(1/h, 1, 1/h, device=grid.device),
             indexing='xy')
         bboxes = torch.sigmoid(self.bboxes(grid))
         bboxes = torch.flatten(torch.stack((
@@ -267,17 +267,17 @@ class Bboxes2Heatmap(torch.nn.Module):
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):
-    def f(self, x, x1, x2):
-        avg = x1
-        stdev = x2 + 1e-6
+    def f(self, x, cx, bw):
+        avg = cx
+        stdev = bw + 1e-6
         sqrt2pi = (2*torch.pi)**0.5
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 
 class LogisticHeatmap(Bboxes2Heatmap):
-    def f(self, x, x1, x2):
+    def f(self, x, cx, bw):
         k = 1
-        x1 = x1 - x2/2
-        x2 = x1 + x2/2
+        x1 = cx - bw/2
+        x2 = cx + bw/2
         logistic0 = 1/(1+torch.exp(-k*(x-x1)))
         logistic1 = 1 - 1/(1+torch.exp(-k*(x-x2)))
         r = logistic0 * logistic1

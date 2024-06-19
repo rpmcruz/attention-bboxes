@@ -6,7 +6,7 @@ parser.add_argument('model', choices=['ProtoPNet', 'ViT', 'OnlyClass', 'Heatmap'
 parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'], default='GaussHeatmap')
 parser.add_argument('--penalty-l1', type=float, default=0)
 parser.add_argument('--penalty-entropy', type=float, default=0)
-parser.add_argument('--nstdev', type=float, default=2)
+parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--occlusion', default='encoder', choices=['none', 'encoder', 'image'])
 parser.add_argument('--adversarial', action='store_true')
 parser.add_argument('--epochs', type=int, default=100)

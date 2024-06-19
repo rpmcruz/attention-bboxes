@@ -3,7 +3,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('model')
 parser.add_argument('dataset')
 parser.add_argument('--captum')
-parser.add_argument('--nstdev', type=float, default=2)
+parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--visualize', action='store_true')
 args = parser.parse_args()
 
