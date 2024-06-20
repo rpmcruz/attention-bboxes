@@ -69,14 +69,18 @@ class Classifier(torch.nn.Module):
 # output format = cxcywh (normalized 0-1)
 
 class Heatmap(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, use_sigmoid):
         super().__init__()
         self.conv = torch.nn.Conv2d(2048, 1, 3, padding=1)
+        self.use_sigmoid = use_sigmoid
 
     def forward(self, features):
         heatmap = self.conv(features[-1])
-        heatmap = torch.softmax(heatmap.reshape(len(heatmap), -1), 1).reshape(len(heatmap), heatmap.shape[2], heatmap.shape[3])
-        heatmap = heatmap / torch.amax(heatmap, (1, 2), True)
+        if self.use_sigmoid:
+            heatmap = torch.sigmoid(heatmap)[:, 0]
+        else:
+            heatmap = torch.softmax(heatmap.reshape(len(heatmap), -1), 1).reshape(len(heatmap), heatmap.shape[2], heatmap.shape[3])
+            heatmap = heatmap / torch.amax(heatmap, (1, 2), True)
         return {'heatmap': heatmap}
 
 class SimpleDet(torch.nn.Module):
@@ -249,6 +253,10 @@ class DETR(torch.nn.Module):
 ########################### PROPOSALS ###########################
 
 class Bboxes2Heatmap(torch.nn.Module):
+    def __init__(self, use_sigmoid):
+        super().__init__()
+        self.use_sigmoid = use_sigmoid
+
     def forward(self, output_shape, bboxes, scores):
         device = bboxes.device
         xx = torch.arange(output_shape[1], device=device)
@@ -261,9 +269,14 @@ class Bboxes2Heatmap(torch.nn.Module):
         # avoid the pdf being too big for a single pixel
         #probs = torch.clamp(xprob*yprob, max=1)
         probs = xprob*yprob
-        scores = torch.softmax(scores, 1)
-        heatmap = torch.sum(scores[..., None, None]*probs, 1)
-        heatmap = heatmap / torch.amax(heatmap, [1, 2], True)  # ensure 0-1
+        if self.use_sigmoid:
+            scores = torch.sigmoid(scores)
+            heatmap = torch.sum(scores[..., None, None]*probs, 1)
+            heatmap = heatmap / torch.amax(heatmap, [1, 2], True)  # ensure 0-1
+        else:
+            scores = torch.softmax(scores, 1)
+            heatmap = torch.sum(scores[..., None, None]*probs, 1)
+            heatmap = heatmap / torch.amax(heatmap, [1, 2], True)  # ensure 0-1
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):

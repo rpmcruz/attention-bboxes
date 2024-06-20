@@ -4,8 +4,8 @@ parser.add_argument('output')
 parser.add_argument('dataset', choices=['Birds', 'StanfordCars', 'StanfordDogs'])
 parser.add_argument('model', choices=['ProtoPNet', 'ViT', 'OnlyClass', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR'])
 parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'], default='GaussHeatmap')
+parser.add_argument('--sigmoid', action='store_true')
 parser.add_argument('--penalty-l1', type=float, default=0)
-parser.add_argument('--penalty-entropy', type=float, default=0)
 parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--occlusion', default='encoder', choices=['none', 'encoder', 'image'])
 parser.add_argument('--adversarial', action='store_true')
@@ -51,8 +51,15 @@ elif args.model == 'ViT':
 else:
     backbone = models.Backbone()
     classifier = models.Classifier(ds.num_classes)
-    detection = getattr(models, args.model)() if args.model != 'OnlyClass' else None
-    heatmap = getattr(models, args.heatmap)()
+    if args.model == 'OnlyClass':
+        detection = None
+        heatmap = None
+    elif args.model == 'Heatmap':
+        detection = models.Heatmap(args.sigmoid)
+        heatmap = None
+    else:
+        detection = getattr(models, args.model)()
+        heatmap = getattr(models, args.heatmap)(args.sigmoid)
     occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
     model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
     slow_opt = torch.optim.Adam(list(backbone.parameters()) + list(detection.parameters()), 1e-4)
@@ -82,10 +89,7 @@ for epoch in range(args.epochs):
         if 'heatmap' in pred:
             l1 = torch.mean(pred['heatmap'])
             loss += args.penalty_l1 * l1
-            norm_heatmap = pred['heatmap'] / torch.sum(pred['heatmap'], (1, 2), True)
-            entropy = torch.mean(-norm_heatmap*torch.log2(norm_heatmap+1e-7))
-            loss += args.penalty_entropy * entropy
-            avg_sparsity += float(entropy) / len(tr)
+            avg_sparsity += float(l1) / len(tr)
         if 'bboxes' in pred:
             avg_bbox_size += float(torch.mean(pred['bboxes'][:, 2:])) / len(tr)
         fast_opt.zero_grad()

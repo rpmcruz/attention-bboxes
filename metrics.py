@@ -66,17 +66,16 @@ class DegradationScore(torchmetrics.Metric):
         ret = score_fn(ypred, true_classes[:, None])
         return ret
 
-class Entropy(torchmetrics.Metric):
+class Sparsity(torchmetrics.Metric):
     # to measure how sparse the explanation is
     def __init__(self):
         super().__init__()
-        self.add_state('entropy', default=torch.tensor(0.), dist_reduce_fx='sum')
+        self.add_state('l1', default=torch.tensor(0.), dist_reduce_fx='sum')
         self.add_state('total', default=torch.tensor(0), dist_reduce_fx='sum')
 
     def update(self, heatmap):
-        heatmap = heatmap / torch.sum(heatmap, (1, 2), True)
-        self.entropy += torch.sum(-heatmap*torch.log2(heatmap))
-        self.total += heatmap.numel()
+        self.l1 += torch.mean(heatmap)
+        self.total += len(heatmap)
 
     def compute(self):
-        return self.entropy / self.total
+        return self.l1 / self.total

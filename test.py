@@ -48,7 +48,7 @@ if args.captum == 'GuidedGradCAM':
 acc = torchmetrics.classification.MulticlassAccuracy(ds.num_classes).to(device)
 pg = metrics.PointingGame().to(device)
 deg_score = metrics.DegradationScore(model).to(device)
-entropy = metrics.Entropy().to(device)
+sparsity = metrics.Sparsity().to(device)
 
 model.eval()
 for i, (x, mask, y) in enumerate(tqdm(ts)):
@@ -63,7 +63,7 @@ for i, (x, mask, y) in enumerate(tqdm(ts)):
         if 'heatmap' in pred:
             pg.update(pred['heatmap'], mask)
             #deg_score.update(x, y, pred['heatmap'])
-            entropy.update(pred['heatmap'])
+            sparsity.update(pred['heatmap'])
     if args.visualize and i == 0:
         import matplotlib.pyplot as plt
         plt.rcParams['figure.figsize'] = (18, 8)
@@ -78,4 +78,4 @@ for i, (x, mask, y) in enumerate(tqdm(ts)):
         plt.suptitle(f'{args.model[:-4]}')
         plt.savefig(f'{args.model}.png')
 
-print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}', f'{deg_score.compute().item()*100:.1f}', f'{entropy.compute().item()*100:.1f}')
+print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}', f'{deg_score.compute().item()*100:.1f}', f'{sparsity.compute().item()*100:.1f}')
