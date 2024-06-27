@@ -11,6 +11,7 @@ parser.add_argument('--occlusion', default='encoder', choices=['none', 'encoder'
 parser.add_argument('--adversarial', action='store_true')
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--batchsize', type=int, default=8)
+parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--visualize', action='store_true')
 parser.add_argument('--fast', action='store_true')
 args = parser.parse_args()
@@ -41,13 +42,13 @@ tr = torch.utils.data.DataLoader(tr, args.batchsize, True, num_workers=4, pin_me
 if args.model == 'ProtoPNet':
     backbone = models.Backbone()
     model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
-    slow_opt = torch.optim.Adam(backbone.parameters(), 1e-4)
-    fast_opt = torch.optim.Adam(model.prototype_layer.parameters())
-    late_opt = torch.optim.Adam(model.fc_layer.parameters())
+    slow_opt = torch.optim.Adam(backbone.parameters(), args.lr/10)
+    fast_opt = torch.optim.Adam(model.prototype_layer.parameters(), args.lr)
+    late_opt = torch.optim.Adam(model.fc_layer.parameters(), args.lr)
 elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
-    slow_opt = torch.optim.Adam([], 1e-4)
-    fast_opt = torch.optim.Adam(model.parameters())
+    slow_opt = torch.optim.Adam([], args.lr/10)
+    fast_opt = torch.optim.Adam(model.parameters(), args.lr)
 else:
     backbone = models.Backbone()
     classifier = models.Classifier(ds.num_classes)
@@ -62,8 +63,8 @@ else:
         heatmap = getattr(models, args.heatmap)(args.sigmoid)
     occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
     model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
-    slow_opt = torch.optim.Adam(list(backbone.parameters()) + (list(detection.parameters()) if detection != None else []), 1e-4)
-    fast_opt = torch.optim.Adam(classifier.parameters())
+    slow_opt = torch.optim.Adam(list(backbone.parameters()) + (list(detection.parameters()) if detection != None else []), args.lr/10)
+    fast_opt = torch.optim.Adam(classifier.parameters(), args.lr)
 model.to(device)
 
 ############################# LOOP #############################
