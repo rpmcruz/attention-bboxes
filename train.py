@@ -62,7 +62,7 @@ else:
         heatmap = getattr(models, args.heatmap)(args.sigmoid)
     occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
     model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
-    slow_opt = torch.optim.Adam(list(backbone.parameters()) + list(detection.parameters()), 1e-4)
+    slow_opt = torch.optim.Adam(list(backbone.parameters()) + (list(detection.parameters()) if detection != None else []), 1e-4)
     fast_opt = torch.optim.Adam(classifier.parameters())
 model.to(device)
 
@@ -120,27 +120,21 @@ for epoch in range(args.epochs):
         # protopnet has two more stages: in the paper they do this after a few epochs
         model.backbone.eval()
         # (stage2) projection of prototypes
-        all_features = [[] for _ in range(ds.num_classes)]
-        all_distances = [[] for _ in range(ds.num_classes)]
+        features_per_class = [[] for _ in range(ds.num_classes)]
         for x, _, y in tr:
             x = x.to(device)
-            y = y.to(device)
             with torch.no_grad():
                 z = model.features(model.backbone(x)[-1])
                 z = torch.flatten(z, 2).permute(0, 2, 1)
-                for k in range(ds.num_classes):
-                    ix = y == k
-                    if ix.sum() > 0:
-                        zk = z[ix]
-                        pk = model.prototype_layer.prototypes[:, k]
-                        distances = torch.cdist(zk, pk)
-                        all_features[k].append(torch.flatten(zk, 0, 1))
-                        all_distances[k].append(torch.flatten(distances, 0, 1))
-        for k in range(ds.num_classes):
-            num_prototypes = model.prototype_layer.prototypes.shape[2]
-            ix = torch.argsort(torch.cat(all_distances[k]))
-            # projection
-            model.prototype_layer.prototypes[:, k] = torch.cat(all_features[k])[ix[:num_prototypes]]
+            for k, zk in zip(y, z):
+                features_per_class[k].append(zk)
+        for k, zk in enumerate(features_per_class):
+            zk = torch.cat(zk)
+            pk = model.prototype_layer.prototypes[0, k]
+            distances = torch.cdist(zk[None], pk[None])[0]
+            ix = torch.argmin(distances, 0)
+            with torch.no_grad():  # projection
+                model.prototype_layer.prototypes[0, k] = zk[ix]
         # (stage3) convex optimization of last layer
         for x, _, y in tr:
             x = x.to(device)

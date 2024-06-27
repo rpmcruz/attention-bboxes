@@ -4,19 +4,18 @@ import torch, torchvision
 import torchvision.tv_tensors
 import os
 
-class Birds:
+class Birds(torch.utils.data.Dataset):
     # https://www.vision.caltech.edu/datasets/cub_200_2011/
     num_classes = 200
     def __init__(self, root, split, transform=None):
         self.root = os.path.join(root, 'CUB_200_2011')
         files = open(os.path.join(self.root, 'images.txt'))
         split = open(os.path.join(self.root, 'train_test_split.txt'))
-        labels = open(os.path.join(self.root, 'image_class_labels.txt'))
         # I don't know if split=0 is test and split=1 is train but I am assuming
-        # that since split=0 49% and split=1 51%
+        # train=1 since split=0 49% and split=1 51%
         train = int(split == 'train')
         self.files = [f.split()[1] for f, s in zip(files, split) if int(s.split()[1]) == train]
-        self.labels = [int(l.split()[1])-1 for l in labels]
+        self.labels = [int(f[:f.index('.')])-1 for f in self.files]
         self.class_names = [line.split()[1][4:-1] for line in open(os.path.join(self.root, 'classes.txt'))]
         self.transform = transform
 
@@ -92,6 +91,9 @@ if __name__ == '__main__':
     parser.add_argument('dataset')
     args = parser.parse_args()
     ds = globals()[args.dataset]('/data/toys', 'train')
+    #from tqdm import tqdm
+    #for k, n in enumerate(torch.bincount(torch.tensor([y for _, _, y in tqdm(ds)]))):
+    #    print(k, n)
     import matplotlib.pyplot as plt
     for i, (image, mask, label) in enumerate(ds):
         plt.subplot(1, 2, 1)

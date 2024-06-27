@@ -10,7 +10,6 @@ args = parser.parse_args()
 import torch
 from torchvision.transforms import v2
 import torchmetrics
-from tqdm import tqdm
 import data, metrics, utils
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -51,7 +50,7 @@ deg_score = metrics.DegradationScore(model).to(device)
 sparsity = metrics.Sparsity().to(device)
 
 model.eval()
-for i, (x, mask, y) in enumerate(tqdm(ts)):
+for i, (x, mask, y) in enumerate(ts):
     x = x.to(device)
     mask = mask.to(device)
     y = y.to(device)
@@ -73,8 +72,9 @@ for i, (x, mask, y) in enumerate(tqdm(ts)):
             if 'bboxes' in pred:
                 utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
             plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
-            plt.subplot(2, 4, i+4+1)
-            utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
+            if 'heatmap' in pred:
+                plt.subplot(2, 4, i+4+1)
+                utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
         plt.suptitle(f'{args.model[:-4]}')
         plt.savefig(f'{args.model}.png')
 

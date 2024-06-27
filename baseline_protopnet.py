@@ -73,8 +73,9 @@ def stage1_loss(model, z, y):
 def stage3_loss(model):
     # cross-entropy should also be applied
     c = torch.ones_like(model.fc_layer.weight)
+    num_classes = model.prototype_layer.prototypes.shape[1]
     num_prototypes_per_class = model.prototype_layer.prototypes.shape[2]
-    for k in range(model.num_classes):
+    for k in range(num_classes):
         c[k, k*num_prototypes_per_class:(k+1)*num_prototypes_per_class] = 0
     sparsity_cost = torch.sum(torch.abs(c*model.fc_layer.weight))
     return sparsity_cost
