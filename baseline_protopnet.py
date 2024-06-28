@@ -70,6 +70,30 @@ def stage1_loss(model, z, y):
             separation_cost += torch.cdist(z, torch.flatten(model.prototype_layer.prototypes[:, not_k], 1, 2)).mean()
     return 0.8*cluster_cost - 0.08*separation_cost
 
+def stage2_match(model, ds):
+    device = next(model.parameters()).device
+    features_per_class = [[] for _ in range(ds.num_classes)]
+    for x, _, y in ds:
+        x = x.to(device)
+        with torch.no_grad():
+            z = model.features(model.backbone(x)[-1])
+            z = torch.flatten(z, 2).permute(0, 2, 1)
+        for k, zk in zip(y, z):
+            features_per_class[k].append(zk)
+    matches_per_class = [[] for _ in range(ds.num_classes)]
+    for k, zk in enumerate(features_per_class):
+        zk = torch.cat(zk)
+        pk = model.prototype_layer.prototypes[0, k]
+        distances = torch.cdist(zk[None], pk[None])[0]
+        ix = torch.argmin(distances, 0)
+        indices_per_class[k] = zk[ix]
+    return features_per_class, indices_per_class
+
+def stage2_project(model, features_per_class, indices_per_class):
+    for k, zk, 
+    with torch.no_grad():  # projection
+        model.prototype_layer.prototypes[0, k] = zk[ix]
+
 def stage3_loss(model):
     # cross-entropy should also be applied
     c = torch.ones_like(model.fc_layer.weight)
