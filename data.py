@@ -4,6 +4,23 @@ import torch, torchvision
 import torchvision.tv_tensors
 import os
 
+class SubsetLabels(torch.utils.data.Dataset):
+    # Filter only the given labels from the dataset (for fast debugging)
+    def __init__(self, ds, labels):
+        self.ds = ds
+        self.ix = [i for i in range(len(ds)) if ds.__getitem__(i, True) in labels]
+        self.labels = labels
+        self.num_classes = len(labels)
+
+    def __len__(self):
+        return len(self.ix)
+
+    def __getitem__(self, i):
+        i = self.ix[i]
+        x, m, y = self.ds[i]
+        y = self.labels.index(y)
+        return x, m, y
+
 class Birds(torch.utils.data.Dataset):
     # https://www.vision.caltech.edu/datasets/cub_200_2011/
     num_classes = 200
@@ -22,9 +39,11 @@ class Birds(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.files)
 
-    def __getitem__(self, i):
+    def __getitem__(self, i, only_label=False):
         fname = self.files[i]
         label = self.labels[i]
+        if only_label:
+            return label
         image = os.path.join(self.root, 'images', fname)
         image = torchvision.io.read_image(image, torchvision.io.ImageReadMode.RGB)
         mask = os.path.join(self.root, 'segmentations', fname[:-3] + 'png')

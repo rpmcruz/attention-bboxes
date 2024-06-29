@@ -13,11 +13,13 @@ parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--batchsize', type=int, default=8)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--visualize', action='store_true')
+parser.add_argument('--fast', action='store_true')
 args = parser.parse_args()
 
 import torch
 from torchvision.transforms import v2
 from time import time
+from tqdm import tqdm
 import data, models, utils
 import baseline_protopnet, baseline_vit
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -35,7 +37,12 @@ test_transforms = v2.Compose([
     v2.ToDtype(torch.float32, True),
 ])
 ds = getattr(data, args.dataset)('/data/toys', 'train', train_transforms)
-ds_noaug = getattr(data, args.dataset)('/data/toys', 'train', test_transforms)
+if args.model == 'ProtoPNet':
+    ds_noaug = getattr(data, args.dataset)('/data/toys', 'train', test_transforms)
+if args.fast:
+    ds = data.SubsetLabels(ds, [0, 1])
+    if args.model == 'ProtoPNet':
+        ds_noaug = data.SubsetLabels(ds_noaug, [0, 1])
 tr = torch.utils.data.DataLoader(ds, args.batchsize, True, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
@@ -44,7 +51,7 @@ if args.model == 'ProtoPNet':
     backbone = models.Backbone()
     model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
     slow_opt = torch.optim.Adam(backbone.parameters(), args.lr/10)
-    fast_opt = torch.optim.Adam(model.prototype_layer.parameters(), args.lr)
+    fast_opt = torch.optim.Adam(list(model.features.parameters()) + list(model.prototype_layer.parameters()), args.lr)
     late_opt = torch.optim.Adam(model.fc_layer.parameters(), args.lr)
 elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
@@ -70,21 +77,21 @@ model.to(device)
 
 ############################# LOOP #############################
 
-visualize_batch = next(iter(tr))
+visualize_batch = next(iter(torch.utils.data.DataLoader(ds_noaug, 4)))
 
 model.train()
 for epoch in range(args.epochs):
     tic = time()
     avg_losses = {}
     avg_metrics = {}
-    for x, masks, y in tr:
+    for x, masks, y in tqdm(tr, 'stage1'):
         x = x.to(device)
         y = y.to(device)
         pred = model(x)
         loss = torch.nn.functional.cross_entropy(pred['class'], y)
         if args.model == 'ProtoPNet':
             stage1_loss = baseline_protopnet.stage1_loss(model, pred['features'], y)
-            loss += stage1_loss
+            loss += 1e-4*stage1_loss
             avg_losses['stage1'] = avg_losses.get('stage1', 0) + float(stage1_loss)/len(tr)
         if 'heatmap' in pred:
             l1 = torch.mean(pred['heatmap'])
@@ -127,7 +134,7 @@ for epoch in range(args.epochs):
         dl = torch.utils.data.DataLoader(ds_noaug, args.batchsize, pin_memory=True)
         features_per_class = [[] for _ in range(ds.num_classes)]
         indices_per_class = [[] for _ in range(ds.num_classes)]
-        for i, (x, _, y) in enumerate(dl):
+        for i, (x, _, y) in enumerate(tqdm(dl, 'stage2')):
             x = x.to(device)
             with torch.no_grad():
                 z = model.features(model.backbone(x)[-1])
@@ -137,28 +144,39 @@ for epoch in range(args.epochs):
             yscale = x.shape[2] // z_shape[2]
             for j, (k, zk) in enumerate(zip(y, z)):
                 features_per_class[k].append(zk)
-                indices_per_class[k] += [(i*args.batchsize+j, x*xscale, y*yscale, (x+1)*xscale, (y+1)*yscale) for y in range(z_shape[2]) for x in range(z_shape[3])]
-        assert len(features_per_class[0]) == len(indices_per_class[0])
+                l = [(i*args.batchsize+j, x*xscale, y*yscale, (x+1)*xscale-1, (y+1)*yscale-1) for y in range(z_shape[2]) for x in range(z_shape[3])]
+                indices_per_class[k] += l
+        model.patch_prototypes = [[] for _ in range(ds.num_classes)]
         model.image_prototypes = [[] for _ in range(ds.num_classes)]
+        model.illustrative_prototypes = [[] for _ in range(ds.num_classes)]
         for k, zk in enumerate(features_per_class):
             zk = torch.cat(zk)
+            assert len(zk) == len(indices_per_class[k])
             pk = model.prototype_layer.prototypes[0, k]
-            print('zk:', zk.shape, 'pk:', pk.shape)
             distances = torch.cdist(zk[None], pk[None])[0]
             ix = torch.argmin(distances, 0)
-            print('ix:', ix.shape)
             with torch.no_grad():  # projection
                 model.prototype_layer.prototypes[0, k] = zk[ix]
             for i in ix:
                 i, x1, y1, x2, y2 = indices_per_class[k][i]
-                patch = ds[i][:, y1:y2, x1:x2]
-                model.image_prototypes[k].append(patch)
+                image = ds_noaug[i][0]
+                patch = image[:, y1:y2, x1:x2]
+                model.patch_prototypes[k].append(patch)
+                model.image_prototypes[k].append(image)
+                image = image.clone()
+                color = torch.tensor((1, 0, 0))[:, None, None]  # red
+                image[:, y1:y1+2, x1:x2] = color
+                image[:, y2:y2+2, x1:x2] = color
+                image[:, y1:y2, x1:x1+2] = color
+                image[:, y1:y2, x2:x2+2] = color
+                model.illustrative_prototypes[k].append(image)
         # (stage3) convex optimization of last layer
-        for x, _, y in tr:
+        for x, _, y in tqdm(tr, 'stage3'):
             x = x.to(device)
             y = y.to(device)
             pred = model(x)
-            stage3_loss = torch.nn.functional.cross_entropy(pred['class'], y) + baseline_protopnet.stage3_loss(model)
+            stage3_loss = torch.nn.functional.cross_entropy(pred['class'], y)
+            stage3_loss += 1e-4*baseline_protopnet.stage3_loss(model)
             late_opt.zero_grad()
             stage3_loss.backward()
             late_opt.step()
@@ -179,17 +197,20 @@ for epoch in range(args.epochs):
             plt.subplot(2, 4, i+1)
             if 'bboxes' in pred:
                 utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
+            else:
+                plt.imshow(x[i].cpu().permute(1, 2, 0))
             plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
             plt.subplot(2, 4, i+4+1)
             if 'heatmap' in pred:
                 utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
         plt.suptitle(f'{args.output[:-4]} epoch={epoch+1}')
         plt.savefig(f'{args.output}-epoch-{epoch+1}.png')
-        if args.protopnet:
-            y = visualize_batch[1][0]
-            for patch in model.image_prototypes[y]:
-                plt.subplot(2, 5, i+1)
-                plt.imshow(patch.permute(1, 2, 0))
-            plt.suptitle(f'ProtoPNet prototypes for class {y} epoch={epoch+1}')
-            plt.savefig(f'{args.output}-epoch-{epoch+1}-prototypes.png')
+        if args.model == 'ProtoPNet':
+            plt.clf()
+            for k in range(2):
+                for i, image in enumerate(model.illustrative_prototypes[k]):
+                    plt.subplot(2, 5, i+1)
+                    plt.imshow(image.permute(1, 2, 0))
+                plt.suptitle(f'ProtoPNet prototypes for class {k} epoch={epoch+1}')
+                plt.savefig(f'{args.output}-epoch-{epoch+1}-prototypes-k{k}.png')
 torch.save(model.cpu(), args.output)
