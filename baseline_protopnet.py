@@ -30,9 +30,6 @@ class PrototypeLayer(torch.nn.Module):
         # then reduced using global max pooling to a single similarity score, which can be
         # understood as how strongly a prototypical part is present in some patch of the
         # input image.
-        # "the m similarity scores produced by the prototype layer g"
-        # this seems to suggest that this layer returns max(similarity), but it makes more sense
-        # to return argmax(similarity)
         similarity = heatmap.amax(1)  # (B, P)
         return similarity
 
@@ -82,4 +79,4 @@ def stage3_loss(model):
     for k in range(num_classes):
         c[k, k*num_prototypes_per_class:(k+1)*num_prototypes_per_class] = 0
     sparsity_cost = torch.sum(torch.abs(c*model.fc_layer.weight))
-    return sparsity_cost
+    return 1e-4*sparsity_cost

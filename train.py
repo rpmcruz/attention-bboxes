@@ -26,9 +26,22 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 ############################# DATA #############################
 
+class TransformProb(torch.nn.Module):
+    def __init__(self, transform, prob):
+        super().__init__()
+        self.transform = transform
+        self.prob = prob
+    def forward(self, *x):
+        if torch.rand(()) < self.prob:
+            x = self.transform(*x)
+        return x
+
 train_transforms = v2.Compose([
     v2.Resize((224, 224)),
     v2.RandomHorizontalFlip(),
+    TransformProb(v2.RandomRotation(15), 0.33),
+    TransformProb(v2.RandomAffine(0, shear=10), 0.33),
+    v2.RandomPerspective(0.2, 0.33),
     v2.ColorJitter(0.2, 0.2),
     v2.ToDtype(torch.float32, True),
 ])
@@ -37,12 +50,10 @@ test_transforms = v2.Compose([
     v2.ToDtype(torch.float32, True),
 ])
 ds = getattr(data, args.dataset)('/data/toys', 'train', train_transforms)
-if args.model == 'ProtoPNet':
-    ds_noaug = getattr(data, args.dataset)('/data/toys', 'train', test_transforms)
+ds_noaug = getattr(data, args.dataset)('/data/toys', 'train', test_transforms)
 if args.fast:
     ds = data.SubsetLabels(ds, [0, 1])
-    if args.model == 'ProtoPNet':
-        ds_noaug = data.SubsetLabels(ds_noaug, [0, 1])
+    ds_noaug = data.SubsetLabels(ds_noaug, [0, 1])
 tr = torch.utils.data.DataLoader(ds, args.batchsize, True, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
@@ -91,7 +102,7 @@ for epoch in range(args.epochs):
         loss = torch.nn.functional.cross_entropy(pred['class'], y)
         if args.model == 'ProtoPNet':
             stage1_loss = baseline_protopnet.stage1_loss(model, pred['features'], y)
-            loss += 1e-4*stage1_loss
+            loss += stage1_loss
             avg_losses['stage1'] = avg_losses.get('stage1', 0) + float(stage1_loss)/len(tr)
         if 'heatmap' in pred:
             l1 = torch.mean(pred['heatmap'])
@@ -125,7 +136,7 @@ for epoch in range(args.epochs):
             heatmaps = torch.nn.functional.interpolate(heatmaps, masks.shape[-2:], mode='nearest-exact')
             avg_metrics['pg'] = avg_metrics.get('acc', 0) + \
                 float(torch.mean((masks.view(len(masks), -1)[range(len(masks)), torch.argmax(heatmaps.view(len(heatmaps), -1), 1)] != 0).float()))/len(tr)
-    if args.model == 'ProtoPNet':
+    if args.model == 'ProtoPNet' and (epoch+1) % 10 == 0:
         # protopnet has two more stages: in the paper they do this after a few epochs
         model.backbone.eval()
         # (stage2) projection of prototypes
@@ -153,6 +164,7 @@ for epoch in range(args.epochs):
             zk = torch.cat(zk)
             assert len(zk) == len(indices_per_class[k])
             pk = model.prototype_layer.prototypes[0, k]
+            # FIXME: maybe we should not allow the same prototype to be reused
             distances = torch.cdist(zk[None], pk[None])[0]
             ix = torch.argmin(distances, 0)
             with torch.no_grad():  # projection
@@ -171,16 +183,17 @@ for epoch in range(args.epochs):
                 image[:, y1:y2, x2:x2+2] = color
                 model.illustrative_prototypes[k].append(image)
         # (stage3) convex optimization of last layer
-        for x, _, y in tqdm(tr, 'stage3'):
-            x = x.to(device)
-            y = y.to(device)
-            pred = model(x)
-            stage3_loss = torch.nn.functional.cross_entropy(pred['class'], y)
-            stage3_loss += 1e-4*baseline_protopnet.stage3_loss(model)
-            late_opt.zero_grad()
-            stage3_loss.backward()
-            late_opt.step()
-            avg_losses['stage3'] = avg_losses.get('stage3', 0) + float(stage3_loss)/len(tr)
+        for _ in tqdm(range(20), 'stage3'):
+            for x, _, y in tr:
+                x = x.to(device)
+                y = y.to(device)
+                pred = model(x)
+                stage3_loss = torch.nn.functional.cross_entropy(pred['class'], y)
+                stage3_loss += 1e-4*baseline_protopnet.stage3_loss(model)
+                late_opt.zero_grad()
+                stage3_loss.backward()
+                late_opt.step()
+                avg_losses['stage3'] = avg_losses.get('stage3', 0) + float(stage3_loss)/len(tr)
         model.backbone.train()
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {" - ".join(f'{k}={v}' for k, v in avg_losses.items())} - Avg metrics: {" - ".join(f'{k}={v}' for k, v in avg_metrics.items())}')
@@ -205,9 +218,9 @@ for epoch in range(args.epochs):
                 utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
         plt.suptitle(f'{args.output[:-4]} epoch={epoch+1}')
         plt.savefig(f'{args.output}-epoch-{epoch+1}.png')
-        if args.model == 'ProtoPNet':
+        if args.model == 'ProtoPNet' and (epoch+1) % 10 == 0:
             plt.clf()
-            for k in range(2):
+            for k in range(2 if args.fast else 10):
                 for i, image in enumerate(model.illustrative_prototypes[k]):
                     plt.subplot(2, 5, i+1)
                     plt.imshow(image.permute(1, 2, 0))
