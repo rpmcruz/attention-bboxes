@@ -62,8 +62,7 @@ if args.model == 'ProtoPNet':
     backbone = models.Backbone()
     model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
     slow_opt = torch.optim.Adam(backbone.parameters(), args.lr/10)
-    fast_opt = torch.optim.Adam(list(model.features.parameters()) + list(model.prototype_layer.parameters()), args.lr)
-    late_opt = torch.optim.Adam(model.fc_layer.parameters(), args.lr)
+    fast_opt = torch.optim.Adam(list(model.features.parameters()) + list(model.prototype_layer.parameters()) + list(model.fc_layer.parameters()), args.lr)
 elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
     slow_opt = torch.optim.Adam([], args.lr/10)
@@ -183,6 +182,10 @@ for epoch in range(args.epochs):
                 image[:, y1:y2, x2:x2+2] = color
                 model.illustrative_prototypes[k].append(image)
         # (stage3) convex optimization of last layer
+        for param in model.parameters():
+            param.requires_grad = False
+        for param in model.fc_layer.parameters():
+            param.requires_grad = True
         for _ in tqdm(range(20), 'stage3'):
             for x, _, y in tr:
                 x = x.to(device)
@@ -190,10 +193,12 @@ for epoch in range(args.epochs):
                 pred = model(x)
                 stage3_loss = torch.nn.functional.cross_entropy(pred['class'], y)
                 stage3_loss += 1e-4*baseline_protopnet.stage3_loss(model)
-                late_opt.zero_grad()
+                fast_opt.zero_grad()
                 stage3_loss.backward()
-                late_opt.step()
+                fast_opt.step()
                 avg_losses['stage3'] = avg_losses.get('stage3', 0) + float(stage3_loss)/len(tr)
+        for param in model.parameters():
+            param.requires_grad = True
         model.backbone.train()
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {" - ".join(f'{k}={v}' for k, v in avg_losses.items())} - Avg metrics: {" - ".join(f'{k}={v}' for k, v in avg_metrics.items())}')
