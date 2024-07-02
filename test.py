@@ -18,6 +18,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 transforms = v2.Compose([
     v2.Resize((224, 224)),
     v2.ToDtype(torch.float32, True),
+    v2.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 # we are testing with the train-set itself for now
 ds = getattr(data, args.dataset)

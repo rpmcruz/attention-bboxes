@@ -44,10 +44,12 @@ train_transforms = v2.Compose([
     v2.RandomPerspective(0.2, 0.33),
     v2.ColorJitter(0.2, 0.2),
     v2.ToDtype(torch.float32, True),
+    v2.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 test_transforms = v2.Compose([
     v2.Resize((224, 224)),
     v2.ToDtype(torch.float32, True),
+    v2.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 ds = getattr(data, args.dataset)('/data/toys', 'train', train_transforms)
 ds_noaug = getattr(data, args.dataset)('/data/toys', 'train', test_transforms)
