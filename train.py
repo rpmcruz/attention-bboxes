@@ -218,7 +218,7 @@ for epoch in range(args.epochs):
             if 'bboxes' in pred:
                 utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
             else:
-                plt.imshow(x[i].cpu().permute(1, 2, 0))
+                plt.imshow(utils.unnormalize(x[i]).cpu())
             plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
             plt.subplot(2, 4, i+4+1)
             if 'heatmap' in pred:
@@ -226,11 +226,11 @@ for epoch in range(args.epochs):
         plt.suptitle(f'{args.output[:-4]} epoch={epoch+1}')
         plt.savefig(f'{args.output}-epoch-{epoch+1}.png')
         if args.model == 'ProtoPNet' and (epoch+1) % 10 == 0:
-            plt.clf()
-            for k in range(2 if args.fast else 10):
+            for k in range(ds.num_classes):
+                plt.clf()
                 for i, image in enumerate(model.illustrative_prototypes[k]):
                     plt.subplot(2, 5, i+1)
-                    plt.imshow(image.permute(1, 2, 0))
+                    plt.imshow(utils.unnormalize(image))
                 plt.suptitle(f'ProtoPNet prototypes for class {k} epoch={epoch+1}')
-                plt.savefig(f'{args.output}-epoch-{epoch+1}-prototypes-k{k}.png')
+                plt.savefig(f'{args.output}-prototypes-k{k}.png')
 torch.save(model.cpu(), args.output)

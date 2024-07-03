@@ -37,7 +37,10 @@ class ProtoPNet(torch.nn.Module):
     def __init__(self, backbone, num_classes, num_prototypes_per_class=10, prototype_dim=256):
         super().__init__()
         self.backbone = backbone
-        self.features = torch.nn.Sequential(torch.nn.LazyConv2d(prototype_dim, 1), torch.nn.ReLU(), torch.nn.LazyConv2d(prototype_dim, 1))
+        self.features = torch.nn.Sequential(
+            torch.nn.Conv2d(2048, 2048//4, 1), torch.nn.ReLU(),
+            torch.nn.Conv2d(2048//4, prototype_dim, 1), torch.nn.Sigmoid()
+        )
         self.prototype_layer = PrototypeLayer(num_classes, num_prototypes_per_class, prototype_dim)
         self.fc_layer = torch.nn.Linear(num_classes*num_prototypes_per_class, num_classes, bias=False)
 
@@ -67,8 +70,8 @@ def stage1_loss(model, z, y):
             not_k = torch.ones(num_classes, dtype=bool)
             not_k[k] = False
             zk = z[ix]
-            cluster_cost += torch.cdist(z, model.prototype_layer.prototypes[:, k]).mean()
-            separation_cost += torch.cdist(z, torch.flatten(model.prototype_layer.prototypes[:, not_k], 1, 2)).mean()
+            cluster_cost += torch.cdist(zk, model.prototype_layer.prototypes[:, k]).mean()
+            separation_cost += torch.cdist(zk, torch.flatten(model.prototype_layer.prototypes[:, not_k], 1, 2)).mean()
     return 0.8*cluster_cost - 0.08*separation_cost
 
 def stage3_loss(model):
