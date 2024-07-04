@@ -63,13 +63,14 @@ tr = torch.utils.data.DataLoader(ds, args.batchsize, True, num_workers=4, pin_me
 if args.model == 'ProtoPNet':
     backbone = models.Backbone()
     model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
-    slow_opt = torch.optim.Adam(backbone.parameters(), args.lr/10)
-    fast_opt = torch.optim.Adam(list(model.features.parameters()) + list(model.prototype_layer.parameters()), args.lr)
+    opt = torch.optim.Adam([
+        {'params': backbone.parameters(), 'lr': args.lr/10},
+        {'params': list(model.features.parameters()) + list(model.prototype_layer.parameters())}
+    ], args.lr)
     late_opt = torch.optim.Adam(model.fc_layer.parameters(), args.lr)
 elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
-    slow_opt = torch.optim.Adam([], args.lr/10)
-    fast_opt = torch.optim.Adam(model.parameters(), args.lr)
+    opt = torch.optim.Adam(model.parameters(), args.lr)
 else:
     backbone = models.Backbone()
     classifier = models.Classifier(ds.num_classes)
@@ -84,8 +85,10 @@ else:
         heatmap = getattr(models, args.heatmap)(args.sigmoid)
     occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
     model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
-    slow_opt = torch.optim.Adam(list(backbone.parameters()) + (list(detection.parameters()) if detection != None else []), args.lr/10)
-    fast_opt = torch.optim.Adam(classifier.parameters(), args.lr)
+    opt = torch.optim.Adam([
+        {'params': backbone.parameters(), 'lr': args.lr/10},
+        {'params': list(classifier.parameters()) + (list(detection.parameters()) if detection != None else [])}
+    ], args.lr)
 model.to(device)
 
 ############################# LOOP #############################
@@ -112,11 +115,9 @@ for epoch in range(args.epochs):
             avg_losses['l1'] = avg_losses.get('l1', 0) + float(l1)/len(tr)
         if 'bboxes' in pred:
             avg_metrics['bbox_size'] = avg_metrics.get('bbox_size', 0) + float(torch.mean(pred['bboxes'][:, 2:]))/len(tr)
-        fast_opt.zero_grad()
-        slow_opt.zero_grad()
+        opt.zero_grad()
         loss.backward(retain_graph=args.adversarial)
-        fast_opt.step()
-        slow_opt.step()
+        opt.step()
         avg_losses['loss'] = avg_losses.get('loss', 0) + float(loss)/len(tr)
         if args.adversarial:
             # temporarily disable gradients for backbone and classifier
