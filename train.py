@@ -64,7 +64,8 @@ if args.model == 'ProtoPNet':
     backbone = models.Backbone()
     model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
     slow_opt = torch.optim.Adam(backbone.parameters(), args.lr/10)
-    fast_opt = torch.optim.Adam(list(model.features.parameters()) + list(model.prototype_layer.parameters()) + list(model.fc_layer.parameters()), args.lr)
+    fast_opt = torch.optim.Adam(list(model.features.parameters()) + list(model.prototype_layer.parameters()), args.lr)
+    late_opt = torch.optim.Adam(model.fc_layer.parameters(), args.lr)
 elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
     slow_opt = torch.optim.Adam([], args.lr/10)
@@ -165,8 +166,18 @@ for epoch in range(args.epochs):
             zk = torch.cat(zk)
             assert len(zk) == len(indices_per_class[k])
             pk = model.prototype_layer.prototypes[0, k]
-            # FIXME: maybe we should not allow the same prototype to be reused
             distances = torch.cdist(zk[None], pk[None])[0]
+            # I was getting the same feature to be projected to different prototypes, so
+            # the prototypes were diverging to the same features.
+            # find the minimum without repetitions
+            ix = torch.zeros(len(pk), dtype=torch.int64)
+            for _ in range(len(pk)):
+                i = distances.argmin()
+                # features zk are the rows, prototypes pk are the columns
+                row, col = i // distances.shape[1], i % distances.shape[1]
+                ix[col] = row
+                distances[row] = torch.inf
+                distances[:, col] = torch.inf
             ix = torch.argmin(distances, 0)
             with torch.no_grad():  # projection
                 model.prototype_layer.prototypes[0, k] = zk[ix]
@@ -195,9 +206,9 @@ for epoch in range(args.epochs):
                 pred = model(x)
                 stage3_loss = torch.nn.functional.cross_entropy(pred['class'], y)
                 stage3_loss += 1e-4*baseline_protopnet.stage3_loss(model)
-                fast_opt.zero_grad()
+                late_opt.zero_grad()
                 stage3_loss.backward()
-                fast_opt.step()
+                late_opt.step()
                 avg_losses['stage3'] = avg_losses.get('stage3', 0) + float(stage3_loss)/len(tr)
         for param in model.parameters():
             param.requires_grad = True
