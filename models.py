@@ -120,24 +120,24 @@ class FasterRCNN(torch.nn.Module):
         self.clf_dropout = torch.nn.Dropout(dropout_p)
         self.clf_head = torch.nn.Linear(hidden_dim, 1)
 
-    def forward(self, images, features):
+    def forward(self, features):
         grid = features[-1]
 
         # RPN
         grid = self.rpn_dropout(self.rpn_conv(grid))
         offsets = self.offsets(grid).reshape(grid.shape[0], 4, 9, grid.shape[2], grid.shape[3])
+        offsets = torch.sigmoid(offsets)
         #scores = torch.sigmoid(self.scores(scores))
 
-        _, _, H, W = images.shape
         _, _, h, w = grid.shape
         xx, yy = torch.meshgrid(
-            torch.arange(0, W, W/w, device=grid.device),
-            torch.arange(0, H, H/h, device=grid.device), indexing='xy')
+            torch.arange((1/w)/2, 1, 1/w, device=grid.device),
+            torch.arange((1/h)/2, 1, 1/h, device=grid.device),
+            indexing='xy')
 
         # in the paper, the anchors are for an image of minimum side=600,
-        # therefore we rescale the anchors for our image size
-        rescale = images.shape[-1]/600
-        scales = [128*rescale, 256*rescale, 512*rescale]
+        # therefore we normalize since we are using 0-1 predictions
+        scales = [128/600, 256/600, 512/600]
         ratios = [0.5, 1, 2]
         anchors = [(scale*(ratio**0.5), scale/(ratio**0.5)) for scale in scales for ratio in ratios]
         anchors = torch.tensor(anchors, device=grid.device).T[None, ..., None, None]
@@ -147,17 +147,18 @@ class FasterRCNN(torch.nn.Module):
             #torch.exp(offsets[:, 2])*anchors[:, 0],
             #torch.exp(offsets[:, 3])*anchors[:, 1]
             # due to unstability, I changed to
-            xx + anchors[:, 0]/2 + torch.sigmoid(offsets[:, 0])*anchors[:, 0],
-            yy + anchors[:, 1]/2 + torch.sigmoid(offsets[:, 1])*anchors[:, 1],
-            torch.nn.functional.softplus(offsets[:, 2])*anchors[:, 0],
-            torch.nn.functional.softplus(offsets[:, 3])*anchors[:, 1]
+            xx + anchors[:, 0]/2 + offsets[:, 0]*anchors[:, 0],
+            yy + anchors[:, 1]/2 + offsets[:, 1]*anchors[:, 1],
+            offsets[:, 2]*anchors[:, 0],
+            offsets[:, 3]*anchors[:, 1]
         ), 1), 2)  # (B, 4, 9*H*W)
         # ops.roi_pool() requires [L, 4] with size B
         # ops.roi_pool() wants xyxy (not xywh)
         roi_bboxes = list(bboxes.permute(0, 2, 1))
-        roi_bboxes = [torchvision.ops.box_convert(bb, 'xywh', 'xyxy') for bb in roi_bboxes]
-        rois = torchvision.ops.roi_pool(grid, roi_bboxes, 7, H/h)
-        rois = rois.reshape(grid.shape[0], -1, grid.shape[1], 7, 7)
+        rescale = torch.tensor([grid.shape[3], grid.shape[2]]*2, device=grid.device)
+        roi_bboxes = [torchvision.ops.box_convert(bb*rescale[None], 'xywh', 'xyxy') for bb in roi_bboxes]
+        rois = torchvision.ops.roi_pool(grid, roi_bboxes, (grid.shape[2], grid.shape[3]), 1)
+        rois = rois.reshape(grid.shape[0], -1, grid.shape[1], grid.shape[2], grid.shape[3])
 
         # classifier
         rois = torch.mean(rois, [-1, -2])
@@ -192,9 +193,9 @@ class FCOS(torch.nn.Module):
             torch.nn.Conv2d(256, 1, 3, padding=1),
         )
         # instead of exp(x), use exp(s_ix) with a trainable scalar s_i for each P_i
-        self.s = torch.nn.parameter.Parameter(torch.ones([5]))
+        #self.s = torch.nn.parameter.Parameter(torch.ones([5]))
 
-    def forward(self, images, features):
+    def forward(self, features):
         _, C3, C4, C5 = features
         upsample = torch.nn.functional.interpolate
         P5 = self.P5(C5)
@@ -203,15 +204,16 @@ class FCOS(torch.nn.Module):
         P4 = self.P4(C4) + upsample(P5, scale_factor=2, mode='nearest-exact')
         P3 = self.P3(C3) + upsample(P4, scale_factor=2, mode='nearest-exact')
 
-        _, _, H, W = images.shape
         _bboxes = []
         _scores = []
-        for i, P in enumerate([P3, P4, P5, P6, P7]):
+        for P in [P3, P4, P5, P6, P7]:
             _, _, h, w = P.shape
             xx, yy = torch.meshgrid(
-                torch.arange((W/w)/2, W, W/w, device=P.device),
-                torch.arange((H/h)/2, H, H/h, device=P.device), indexing='xy')
-            bboxes = torch.exp(self.s[i]*self.reg_head(P))
+                torch.arange((1/w)/2, 1, 1/w, device=P.device),
+                torch.arange((1/h)/2, 1, 1/h, device=P.device),
+                indexing='xy')
+            #bboxes = torch.exp(self.s[i]*self.reg_head(P))
+            bboxes = torch.sigmoid(self.reg_head(P))
             bboxes = torch.stack((
                 xx - bboxes[:, 0], yy - bboxes[:, 1],
                 bboxes[:, 2]-bboxes[:, 0], bboxes[:, 3]-bboxes[:, 1]
@@ -236,7 +238,7 @@ class DETR(torch.nn.Module):
         self.row_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
         self.col_embed = torch.nn.Parameter(torch.rand(50, hidden_dim // 2))
 
-    def forward(self, images, features):
+    def forward(self, features):
         grid = features[-1]
         h = self.conv(grid)
         N, _, H, W = h.shape
@@ -245,9 +247,8 @@ class DETR(torch.nn.Module):
             self.row_embed[:H, None].repeat(1, W, 1),
         ], -1).flatten(0, 1)[None]
         h = self.transformer(pos + h.flatten(2).permute(0, 2, 1), self.query_pos[None].repeat(N, 1, 1))
-        scores = self.scores(h)[:, 0]
-        scale = torch.tensor((images.shape[3], images.shape[2], images.shape[3], images.shape[2]), device=images.device)[None]
-        bboxes = torch.sigmoid(self.bboxes(h)) * scale
+        scores = self.scores(h)[..., 0]
+        bboxes = torch.sigmoid(self.bboxes(h)).permute(0, 2, 1)
         return {'bboxes': bboxes, 'scores': scores}
 
 ########################### PROPOSALS ###########################
