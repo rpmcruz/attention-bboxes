@@ -7,25 +7,34 @@ for DATASET in $DATASETS; do
 
 MODELS="OnlyClass ProtoPNet ViT"
 for MODEL in $MODELS; do
-echo "model-$DATASET-$MODEL"
+NAME="model-$DATASET-$MODEL.pth"
+if [ ! -f $NAME ]; then
+echo $NAME
 python3 train.py model-$DATASET-$MODEL.pth $DATASET $MODEL
+fi
 done
 
 MODEL=Heatmap
 for PENALTY in $PENALTIES; do
-echo "model-$DATASET-$MODEL-l1-$PENALTY-sigmoid"
-python3 train.py model-$DATASET-$MODEL-l1-$PENALTY-sigmoid.pth $DATASET $MODEL --penalty-l1 $PENALTY --sigmoid
+NAME="model-$DATASET-$MODEL-l1-$PENALTY-sigmoid.pth"
+if [ ! -f $NAME ]; then
+echo $NAME
+python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --sigmoid
+fi
 done
 
-MODELS="SimpleDet FasterRCNN FCOS DETR"
-HEATMAPS="GaussHeatmap LogisticHeatmap"
-for HEATMAP in $HEATMAPS; do
-for MODEL in $MODELS; do
-for PENALTY in $PENALTIES; do
-echo "model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-sigmoid.pth"
-python3 train.py model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-sigmoid.pth $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --sigmoid
-done
-done
-done
+#MODELS="SimpleDet FasterRCNN FCOS DETR"
+#HEATMAPS="GaussHeatmap LogisticHeatmap"
+#for HEATMAP in $HEATMAPS; do
+#for MODEL in $MODELS; do
+#for PENALTY in $PENALTIES; do
+#NAME="model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-sigmoid.pth"
+#if [ ! -f $NAME ]; then
+#echo $NAME
+#python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --sigmoid
+#fi
+#done
+#done
+#done
 
 done
