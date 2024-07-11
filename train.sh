@@ -23,18 +23,18 @@ python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --sigmoid
 fi
 done
 
-#MODELS="SimpleDet FasterRCNN FCOS DETR"
-#HEATMAPS="GaussHeatmap LogisticHeatmap"
-#for HEATMAP in $HEATMAPS; do
-#for MODEL in $MODELS; do
-#for PENALTY in $PENALTIES; do
-#NAME="model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-sigmoid.pth"
-#if [ ! -f $NAME ]; then
-#echo $NAME
-#python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --sigmoid
-#fi
-#done
-#done
-#done
+MODELS="SimpleDet FasterRCNN FCOS DETR"
+HEATMAPS="GaussHeatmap LogisticHeatmap"
+for HEATMAP in $HEATMAPS; do
+for MODEL in $MODELS; do
+for PENALTY in $PENALTIES; do
+NAME="model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-sigmoid.pth"
+if [ ! -f $NAME ]; then
+echo $NAME
+python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --sigmoid
+fi
+done
+done
+done
 
 done
