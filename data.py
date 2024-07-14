@@ -57,11 +57,12 @@ class StanfordCars:
     num_classes = 196
     def __init__(self, root, split, transform=None):
         root = os.path.join(root, 'stanford_cars')
-        fname = 'cars_train_annos.mat' if split == 'train' else 'cars_test_annos_withlabels.mat'
-        data = loadmat(os.path.join(root, 'devkit', fname), simplify_cells=True)
+        dname = f'cars_{split}'
+        fname = 'devkit/cars_train_annos.mat' if split == 'train' else 'cars_test_annos_withlabels.mat'
+        data = loadmat(os.path.join(root, fname), simplify_cells=True)
         self.class_names = list(loadmat(os.path.join(root, 'devkit', 'cars_meta.mat'), simplify_cells=True)['class_names'])
         self.data = data['annotations']
-        self.root = os.path.join(root, 'cars_train')
+        self.root = os.path.join(root, dname)
         self.transform = transform
 
     def __len__(self):
