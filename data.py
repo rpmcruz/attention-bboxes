@@ -57,7 +57,8 @@ class StanfordCars:
     num_classes = 196
     def __init__(self, root, split, transform=None):
         root = os.path.join(root, 'stanford_cars')
-        data = loadmat(os.path.join(root, 'devkit', f'cars_{split}_annos.mat'), simplify_cells=True)
+        fname = 'cars_train_annos.mat' if split == 'train' else 'cars_test_annos_withlabels.mat'
+        data = loadmat(os.path.join(root, 'devkit', fname), simplify_cells=True)
         self.class_names = list(loadmat(os.path.join(root, 'devkit', 'cars_meta.mat'), simplify_cells=True)['class_names'])
         self.data = data['annotations']
         self.root = os.path.join(root, 'cars_train')
@@ -71,8 +72,7 @@ class StanfordCars:
         image = torchvision.io.read_image(os.path.join(self.root, d['fname']), torchvision.io.ImageReadMode.RGB)
         mask = torchvision.tv_tensors.Mask(torch.zeros(1, image.shape[1], image.shape[2], dtype=bool))
         mask[0, d['bbox_y1']:d['bbox_y2']+1, d['bbox_x1']:d['bbox_x2']+1] = True
-        # FIXME: test set does not have class labels
-        label = d.get('class', 1)-1
+        label = d['class']-1
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
