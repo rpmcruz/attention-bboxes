@@ -8,12 +8,12 @@ class PointingGame(torchmetrics.Metric):
         self.add_state('correct', default=torch.tensor(0), dist_reduce_fx='sum')
         self.add_state('total', default=torch.tensor(0), dist_reduce_fx='sum')
 
-    def update(self, preds, target):
-        preds = torch.nn.functional.interpolate(preds[:, None], target.shape[-2:], mode='nearest-exact')
-        preds = preds.view(len(preds), -1)
-        target = target.view(len(target), -1)
-        self.correct += sum(target[range(len(target)), torch.argmax(preds, 1)] != 0)
-        self.total += len(preds)
+    def update(self, heatmaps, masks):
+        heatmaps = torch.nn.functional.interpolate(heatmaps[:, None], masks.shape[-2:], mode='bilinear')
+        heatmaps = heatmaps.view(len(heatmaps), -1)
+        masks = masks.view(len(masks), -1)
+        self.correct += sum(masks[range(len(masks)), torch.argmax(heatmaps, 1)] != 0)
+        self.total += len(heatmaps)
 
     def compute(self):
         return self.correct / self.total
@@ -30,8 +30,8 @@ class DegradationScore(torchmetrics.Metric):
         self.add_state('count', default=torch.tensor(0), dist_reduce_fx='sum')
 
     def update(self, images, true_classes, heatmaps):
-        lerf = self.degradation_curve('lerf', self.model, self.score, images, true_classes, heatmaps[:, None])
-        morf = self.degradation_curve('morf', self.model, self.score, images, true_classes, heatmaps[:, None])
+        lerf = self.degradation_curve('lerf', self.model, self.score, images, true_classes, heatmaps)
+        morf = self.degradation_curve('morf', self.model, self.score, images, true_classes, heatmaps)
         self.areas += torch.sum(torch.mean(lerf - morf, 1))
         self.count += len(images)
 
@@ -47,13 +47,13 @@ class DegradationScore(torchmetrics.Metric):
         # attribution." arXiv preprint arXiv:2001.00396 (2020).
         assert curve_type in ['lerf', 'morf']
         assert len(images.shape) == 4
-        assert len(heatmaps.shape) == 4 and heatmaps.shape[1] == 1
+        assert len(heatmaps.shape) == 3
         descending = curve_type == 'morf'
         ix = torch.argsort(heatmaps.view(len(heatmaps), -1), descending=descending)[:, :-1]
-        cc = ix % heatmaps.shape[2]
-        rr = ix // heatmaps.shape[2]
-        xscale = images.shape[3] // heatmaps.shape[3]
-        yscale = images.shape[2] // heatmaps.shape[2]
+        cc = ix % heatmaps.shape[1]
+        rr = ix // heatmaps.shape[1]
+        xscale = images.shape[3] // heatmaps.shape[2]
+        yscale = images.shape[2] // heatmaps.shape[1]
         occlusions = torch.repeat_interleave(images, ix.shape[1], 0)
         occlusions = occlusions.reshape(images.shape[0], ix.shape[1], *images.shape[1:])
         for j in range(len(images)):
@@ -61,7 +61,12 @@ class DegradationScore(torchmetrics.Metric):
                 occlusions[j, i:, c*yscale:(c+1)*yscale, r*xscale:(r+1)*xscale] = 0
         occlusions = occlusions.reshape(-1, *images.shape[1:])
         with torch.no_grad():
-            ypred = model(occlusions)['class'].argmax(1)
+            ypred = model(occlusions)
+            if type(ypred) == dict:
+                ypred = ypred['class']
+            else:
+                ypred = ypred[0]
+            ypred = ypred.argmax(1)
         ypred = ypred.reshape(len(images), -1)
         ret = score_fn(ypred, true_classes[:, None])
         return ret

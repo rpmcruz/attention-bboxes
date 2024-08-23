@@ -3,8 +3,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('model')
 parser.add_argument('dataset')
 parser.add_argument('--captum')
+parser.add_argument('--protopnet', action='store_true')
 parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--visualize', action='store_true')
+parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
 import torch
@@ -12,6 +14,9 @@ from torchvision.transforms import v2
 import torchmetrics
 import data, metrics, utils
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+import warnings
+warnings.filterwarnings('ignore', category=UserWarning)
 
 ############################# DATA #############################
 
@@ -27,20 +32,23 @@ ts = torch.utils.data.DataLoader(ts, 8, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
 
+if args.protopnet:
+    import sys
+    sys.path.append('protopnet')
 model = torch.load(args.model, map_location=device)
 
 ########################### BASELINES ###########################
 
-baseline_heatmap = None
+captum_heatmap = None
 if args.captum == 'IntegratedGradients':
     from captum.attr import IntegratedGradients
     ig = IntegratedGradients(model)
-    def baseline_heatmap(x, y):
+    def captum_heatmap(x, y):
         return ig.attribute(x, target=y)
 if args.captum == 'GuidedGradCAM':
     from captum.attr import GuidedGradCam
-    ggc = GuidedGradCam(model, model.layer4)
-    def baseline_heatmap(x, y):
+    ggc = GuidedGradCam(model, model.backbone.resnet.layer4)
+    def captum_heatmap(x, y):
         return ggc.attribute(x, y)
 
 ############################# LOOP #############################
@@ -56,13 +64,26 @@ for i, (x, mask, y) in enumerate(ts):
     mask = mask.to(device)
     y = y.to(device)
     with torch.no_grad():
-        pred = model(x)
+        if args.protopnet:
+            pred, dist = model(x)
+            heatmap = model.distance_2_similarity(model.prototype_distances(x))
+            heatmap = heatmap.mean(1)
+            heatmap = (heatmap - heatmap.amin((1, 2), True)) / (heatmap.amax((1, 2), True) - heatmap.amin((1, 2), True))
+            pred = {'class': pred, 'heatmap': heatmap}
+        else:
+            pred = model(x)
         acc.update(pred['class'].argmax(1), y)
-        if baseline_heatmap != None:
-            pred['heatmap'] = baseline_heatmap(x, y)
+        if captum_heatmap != None:
+            model.return_dict = False
+            heatmap = captum_heatmap(x, y)
+            heatmap = heatmap.mean(1)
+            # make heatmap 7x7 like the others to make it faster
+            heatmap = torch.nn.functional.interpolate(heatmap[:, None], (7, 7), mode='bilinear')[:, 0]
+            pred['heatmap'] = heatmap
+            model.return_dict = True
         if 'heatmap' in pred:
             pg.update(pred['heatmap'], mask)
-            #deg_score.update(x, y, pred['heatmap'])
+            deg_score.update(x, y, pred['heatmap'])
             sparsity.update(pred['heatmap'])
     if args.visualize and i == 0:
         import matplotlib.pyplot as plt
@@ -78,5 +99,10 @@ for i, (x, mask, y) in enumerate(ts):
                 utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
         plt.suptitle(f'{args.model[:-4]}')
         plt.savefig(f'{args.model}.png')
+    if args.debug:
+        break
 
-print(args.model, f'{acc.compute().item()*100:.1f}', f'{pg.compute().item()*100:.1f}', f'{deg_score.compute().item()*100:.1f}', f'{sparsity.compute().item()*100:.1f}')
+if 'OnlyClass' in args.model and args.captum == None:
+    print(args.model, args.dataset, acc.compute().item(), 'nan', 'nan', 'nan', sep=',')
+else:
+    print(args.model, args.dataset, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')

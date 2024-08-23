@@ -136,7 +136,7 @@ for epoch in range(args.epochs):
         if 'heatmap' in pred:
             masks = masks.to(device)
             heatmaps = pred['heatmap'][:, None]
-            heatmaps = torch.nn.functional.interpolate(heatmaps, masks.shape[-2:], mode='nearest-exact')
+            heatmaps = torch.nn.functional.interpolate(heatmaps, masks.shape[-2:], mode='bilinear')
             avg_metrics['pg'] = avg_metrics.get('acc', 0) + \
                 float(torch.mean((masks.view(len(masks), -1)[range(len(masks)), torch.argmax(heatmaps.view(len(heatmaps), -1), 1)] != 0).float()))/len(tr)
     if args.model == 'ProtoPNet' and (epoch+1) % 10 == 0:

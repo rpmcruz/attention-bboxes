@@ -11,11 +11,15 @@ class Occlusion(torch.nn.Module):
         self.classifier = classifier
         self.occlusion_level = occlusion_level
         self.is_adversarial = is_adversarial
+        self.return_dict = True
 
     def forward(self, images):
         features = self.backbone(images)
         embed = features[-1]
         if self.occlusion_level == 'none':
+            if not getattr(self, 'return_dict', True):
+                # this is a hack because captum wants models to return class names
+                return self.classifier(embed)
             return {'class': self.classifier(embed)}
         det = self.detection(features)
         if 'heatmap' not in det:
