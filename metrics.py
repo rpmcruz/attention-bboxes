@@ -58,7 +58,7 @@ class DegradationScore(torchmetrics.Metric):
         occlusions = occlusions.reshape(images.shape[0], ix.shape[1], *images.shape[1:])
         for j in range(len(images)):
             for i, (c, r) in enumerate(zip(cc[j], rr[j])):
-                occlusions[j, i:, c*yscale:(c+1)*yscale, r*xscale:(r+1)*xscale] = 0
+                occlusions[j, i:, :, c*yscale:(c+1)*yscale, r*xscale:(r+1)*xscale] = 0
         occlusions = occlusions.reshape(-1, *images.shape[1:])
         with torch.no_grad():
             ypred = model(occlusions)
@@ -68,8 +68,7 @@ class DegradationScore(torchmetrics.Metric):
                 ypred = ypred[0]
             ypred = ypred.argmax(1)
         ypred = ypred.reshape(len(images), -1)
-        ret = score_fn(ypred, true_classes[:, None])
-        return ret
+        return score_fn(ypred, true_classes[:, None])
 
 class Sparsity(torchmetrics.Metric):
     # to measure how sparse the explanation is
