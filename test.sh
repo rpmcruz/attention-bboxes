@@ -18,8 +18,10 @@ python3 test.py $model $dataset --captum $captum
 done
 
 # baseline: protopnet
-model="model-protopnet-$dataset.pth"
+model="model-$dataset-ProtoPNet.pth"
 python3 test.py $model $dataset --protopnet
+model="model-$dataset-ProtoPNet.pth"
+python3 test.py $model $dataset --protopnet --crop
 
 # proposal (with ablation)
 for penalty in $PENALTIES; do

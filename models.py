@@ -97,12 +97,12 @@ class SimpleDet(torch.nn.Module):
         grid = features[-1]
         _, _, h, w = grid.shape
         xx, yy = torch.meshgrid(
-            torch.arange((1/w)/2, 1, 1/w, device=grid.device),
-            torch.arange((1/h)/2, 1, 1/h, device=grid.device),
+            torch.arange(0, 1, 1/w, device=grid.device),
+            torch.arange(0, 1, 1/h, device=grid.device),
             indexing='xy')
         bboxes = torch.sigmoid(self.bboxes(grid))
         bboxes = torch.flatten(torch.stack((
-            xx[None].repeat(len(grid), 1, 1), yy[None].repeat(len(grid), 1, 1),
+            (1/w)/2 + xx[None].repeat(len(grid), 1, 1), (1/h)/2 + yy[None].repeat(len(grid), 1, 1),
             bboxes[:, 0], bboxes[:, 1]), 1), 2)
         scores = torch.flatten(self.scores(grid), 1)
         return {'bboxes': bboxes, 'scores': scores}
@@ -135,8 +135,8 @@ class FasterRCNN(torch.nn.Module):
 
         _, _, h, w = grid.shape
         xx, yy = torch.meshgrid(
-            torch.arange((1/w)/2, 1, 1/w, device=grid.device),
-            torch.arange((1/h)/2, 1, 1/h, device=grid.device),
+            torch.arange(0, 1, 1/w, device=grid.device),
+            torch.arange(0, 1, 1/h, device=grid.device),
             indexing='xy')
 
         # in the paper, the anchors are for an image of minimum side=600,
@@ -151,8 +151,8 @@ class FasterRCNN(torch.nn.Module):
             #torch.exp(offsets[:, 2])*anchors[:, 0],
             #torch.exp(offsets[:, 3])*anchors[:, 1]
             # due to unstability, I changed to
-            xx + anchors[:, 0]/2 + offsets[:, 0]*anchors[:, 0],
-            yy + anchors[:, 1]/2 + offsets[:, 1]*anchors[:, 1],
+            xx + offsets[:, 0]/w,
+            yy + offsets[:, 1]/h,
             offsets[:, 2]*anchors[:, 0],
             offsets[:, 3]*anchors[:, 1]
         ), 1), 2)  # (B, 4, 9*H*W)
@@ -213,14 +213,15 @@ class FCOS(torch.nn.Module):
         for P in [P3, P4, P5, P6, P7]:
             _, _, h, w = P.shape
             xx, yy = torch.meshgrid(
-                torch.arange((1/w)/2, 1, 1/w, device=P.device),
-                torch.arange((1/h)/2, 1, 1/h, device=P.device),
+                torch.arange(0, 1, 1/w, device=P.device),
+                torch.arange(0, 1, 1/h, device=P.device),
                 indexing='xy')
             #bboxes = torch.exp(self.s[i]*self.reg_head(P))
             bboxes = torch.sigmoid(self.reg_head(P))
             bboxes = torch.stack((
-                xx - bboxes[:, 0], yy - bboxes[:, 1],
-                bboxes[:, 2]-bboxes[:, 0], bboxes[:, 3]-bboxes[:, 1]
+                xx + bboxes[:, 0]/w, yy + bboxes[:, 1]/h,
+                #bboxes[:, 2]-bboxes[:, 0], bboxes[:, 3]-bboxes[:, 1]
+                bboxes[:, 2], bboxes[:, 3]
             ), 1)
             scores = self.clf_head(P)
             _bboxes.append(torch.flatten(bboxes, 2))
@@ -288,6 +289,7 @@ class GaussHeatmap(Bboxes2Heatmap):
     def f(self, x, cx, bw):
         avg = cx
         stdev = bw + 1e-6
+        assert stdev.amin() > 0, 'bbox width or height has negative value ' + str(stdev.amin().item())
         sqrt2pi = (2*torch.pi)**0.5
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
 

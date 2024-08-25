@@ -6,6 +6,7 @@ parser.add_argument('--captum')
 parser.add_argument('--protopnet', action='store_true')
 parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--visualize', action='store_true')
+parser.add_argument('--crop', action='store_true')
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
@@ -27,7 +28,7 @@ transforms = v2.Compose([
 ])
 # we are testing with the train-set itself for now
 ds = getattr(data, args.dataset)
-ts = ds('/data/toys', 'test', transforms)
+ts = ds('/data/toys', 'test', transforms, args.crop)
 ts = torch.utils.data.DataLoader(ts, 8, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
@@ -104,7 +105,4 @@ for i, (x, mask, y) in enumerate(ts):
     if args.debug:
         break
 
-if 'OnlyClass' in args.model and args.captum == None:
-    print(args.model[:-4], args.dataset, acc.compute().item(), 'nan', 'nan', 'nan', sep=',')
-else:
-    print(args.model[:-4], args.dataset, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')
+print(args.model[:-4], args.dataset, args.captum, args.crop, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')

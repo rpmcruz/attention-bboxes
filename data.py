@@ -24,17 +24,20 @@ class SubsetLabels(torch.utils.data.Dataset):
 class Birds(torch.utils.data.Dataset):
     # https://www.vision.caltech.edu/datasets/cub_200_2011/
     num_classes = 200
-    def __init__(self, root, split, transform=None):
+    def __init__(self, root, split, transform=None, crop=False):
         self.root = os.path.join(root, 'CUB_200_2011')
         files = open(os.path.join(self.root, 'images.txt'))
         split = open(os.path.join(self.root, 'train_test_split.txt'))
+        bboxes = open(os.path.join(root, 'bounding_boxes.txt'))
         # I don't know if split=0 is test and split=1 is train but I am assuming
         # train=1 since split=0 49% and split=1 51%
         train = int(split == 'train')
         self.files = [f.split()[1] for f, s in zip(files, split) if int(s.split()[1]) == train]
         self.labels = [int(f[:f.index('.')])-1 for f in self.files]
+        self.bboxes = [[int(float(v)) for v in line.split()[1:]] for line in bboxes]
         self.class_names = [line.split()[1][4:-1] for line in open(os.path.join(self.root, 'classes.txt'))]
         self.transform = transform
+        self.crop = crop
 
     def __len__(self):
         return len(self.files)
@@ -48,6 +51,9 @@ class Birds(torch.utils.data.Dataset):
         image = torchvision.io.read_image(image, torchvision.io.ImageReadMode.RGB)
         mask = os.path.join(self.root, 'segmentations', fname[:-3] + 'png')
         mask = torchvision.tv_tensors.Mask(torchvision.io.read_image(mask, torchvision.io.ImageReadMode.GRAY))
+        if self.crop:
+            bbox = self.bboxes[i]
+            image = image[bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
@@ -55,7 +61,7 @@ class Birds(torch.utils.data.Dataset):
 class StanfordCars:
     # https://www.kaggle.com/datasets/jessicali9530/stanford-cars-dataset
     num_classes = 196
-    def __init__(self, root, split, transform=None):
+    def __init__(self, root, split, transform=None, crop=False):
         root = os.path.join(root, 'stanford_cars')
         dname = f'cars_{split}'
         fname = 'devkit/cars_train_annos.mat' if split == 'train' else 'cars_test_annos_withlabels.mat'
@@ -64,6 +70,7 @@ class StanfordCars:
         self.data = data['annotations']
         self.root = os.path.join(root, dname)
         self.transform = transform
+        self.crop = crop
 
     def __len__(self):
         return len(self.data)
@@ -74,6 +81,9 @@ class StanfordCars:
         mask = torchvision.tv_tensors.Mask(torch.zeros(1, image.shape[1], image.shape[2], dtype=bool))
         mask[0, d['bbox_y1']:d['bbox_y2']+1, d['bbox_x1']:d['bbox_x2']+1] = True
         label = d['class']-1
+        if self.crop:
+            bbox = (d['bbox_x1'], d['bbox_y1'], d['bbox_x2'], d['bbox_y2'])
+            image = image[bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
@@ -81,13 +91,14 @@ class StanfordCars:
 class StanfordDogs:
     # http://vision.stanford.edu/aditya86/ImageNetDogs/
     num_classes = 120
-    def __init__(self, root, split, transform=None):
+    def __init__(self, root, split, transform=None, crop=False):
         self.root = os.path.join(root, 'stanford_dogs')
         l = loadmat(os.path.join(self.root, f'{split}_list.mat'), simplify_cells=True)
         self.files = l['file_list']
         self.labels = l['labels']-1
         self.class_names = ['-'.join(species.split('-')[1:]) for species in sorted(os.listdir(os.path.join(root, 'stanford_dogs', 'Images')))]
         self.transform = transform
+        self.crop = crop
 
     def __len__(self):
         return len(self.files)
@@ -97,10 +108,18 @@ class StanfordDogs:
         label = self.labels[i]
         image = torchvision.io.read_image(os.path.join(self.root, 'Images', fname), torchvision.io.ImageReadMode.RGB)
         ann = ET.parse(os.path.join(self.root, 'Annotation', fname[:-4]))
-        bndboxes = [{c.tag: int(c.text) for c in bbox} for bbox in ann.findall('.//bndbox')]
+        bboxes = [{c.tag: int(c.text) for c in bbox} for bbox in ann.findall('.//bndbox')]
         mask = torchvision.tv_tensors.Mask(torch.zeros(1, image.shape[1], image.shape[2], dtype=bool))
-        for bndbox in bndboxes:
-            mask[0, bndbox['ymin']:bndbox['ymax']+1, bndbox['xmin']:bndbox['xmax']+1] = True
+        for bbox in bboxes:
+            mask[0, bbox['ymin']:bbox['ymax']+1, bbox['xmin']:bbox['xmax']+1] = True
+        if self.crop:
+            bbox = (
+                min(bb['xmin'] for bb in bboxes),
+                min(bb['ymin'] for bb in bboxes),
+                max(bb['xmax'] for bb in bboxes),
+                max(bb['ymax'] for bb in bboxes),
+            )
+            image = image[bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label

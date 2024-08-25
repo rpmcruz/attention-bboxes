@@ -23,7 +23,7 @@ for DATASET in $DATASETS; do
 #fi
 #done
 
-MODELS="SimpleDet FasterRCNN FCOS DETR"
+MODELS="SimpleDet FasterRCNN FCOS"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
 for HEATMAP in $HEATMAPS; do
 for MODEL in $MODELS; do
