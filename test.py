@@ -67,7 +67,9 @@ for i, (x, mask, y) in enumerate(ts):
         if args.protopnet:
             pred, dist = model(x)
             heatmap = model.distance_2_similarity(model.prototype_distances(x))
-            heatmap = heatmap.mean(1)
+            # ProtoPNet heatmaps are for each prototype
+            # - should we use mean or max to merge them?
+            heatmap = heatmap.max(1)
             heatmap = (heatmap - heatmap.amin((1, 2), True)) / (heatmap.amax((1, 2), True) - heatmap.amin((1, 2), True))
             pred = {'class': pred, 'heatmap': heatmap}
         else:
@@ -103,6 +105,6 @@ for i, (x, mask, y) in enumerate(ts):
         break
 
 if 'OnlyClass' in args.model and args.captum == None:
-    print(args.model, args.dataset, acc.compute().item(), 'nan', 'nan', 'nan', sep=',')
+    print(args.model[:-4], args.dataset, acc.compute().item(), 'nan', 'nan', 'nan', sep=',')
 else:
-    print(args.model, args.dataset, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')
+    print(args.model[:-4], args.dataset, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')
