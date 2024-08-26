@@ -28,7 +28,7 @@ class Birds(torch.utils.data.Dataset):
         self.root = os.path.join(root, 'CUB_200_2011')
         files = open(os.path.join(self.root, 'images.txt'))
         split = open(os.path.join(self.root, 'train_test_split.txt'))
-        bboxes = open(os.path.join(root, 'bounding_boxes.txt'))
+        bboxes = open(os.path.join(self.root, 'bounding_boxes.txt'))
         # I don't know if split=0 is test and split=1 is train but I am assuming
         # train=1 since split=0 49% and split=1 51%
         train = int(split == 'train')

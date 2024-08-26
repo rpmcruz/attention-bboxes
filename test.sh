@@ -1,12 +1,14 @@
 #!/bin/bash
 
 DATASETS="Birds StanfordCars StanfordDogs"
+DATASETS="$1"
 PENALTIES="0 0.001 0.1 1 10"
 CAPTUM="IntegratedGradients GuidedGradCAM"
 MODELS="SimpleDet FasterRCNN FCOS DETR"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
 
-echo "model,dataset,acc,pg,degscore,sparsity"
+echo "model,dataset,captum,crop,acc,pg,degscore,sparsity"
+
 for dataset in $DATASETS; do
 # baseline: no heatmap (only class)
 model="model-$dataset-OnlyClass.pth"
