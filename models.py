@@ -24,7 +24,7 @@ class Occlusion(torch.nn.Module):
         det = self.detection(features)
         if 'heatmap' not in det:
             heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
-            scale = embed.shape[-1] / images.shape[-1]
+            det['bboxes'][:, 2:] += 1e-3  # specify a minimum size for width/height
             det['heatmap'] = self.bboxes2heatmap(heatmap_shape, det['bboxes'], det['scores'])
         heatmap = det['heatmap']
         if self.is_adversarial:
@@ -287,8 +287,7 @@ class Bboxes2Heatmap(torch.nn.Module):
 
 class GaussHeatmap(Bboxes2Heatmap):
     def f(self, x, cx, bw):
-        avg = cx
-        stdev = bw + 1e-6
+        avg, stdev = cx, bw
         assert stdev.amin() > 0, 'bbox width or height has negative value ' + str(stdev.amin().item())
         sqrt2pi = (2*torch.pi)**0.5
         return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
