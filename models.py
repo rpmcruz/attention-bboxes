@@ -22,9 +22,11 @@ class Occlusion(torch.nn.Module):
                 return self.classifier(embed)
             return {'class': self.classifier(embed)}
         det = self.detection(features)
+        if 'bboxes' in det:
+            # for numerical reasons (avoid div0), minimum size for width/height
+            det['bboxes'] = torch.cat((det['bboxes'][:, :2], det['bboxes'][:, 2:] + 1e-3), 1)
         if 'heatmap' not in det:
             heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
-            det['bboxes'][:, 2:] += 1e-3  # specify a minimum size for width/height
             det['heatmap'] = self.bboxes2heatmap(heatmap_shape, det['bboxes'], det['scores'])
         heatmap = det['heatmap']
         if self.is_adversarial:
@@ -277,12 +279,10 @@ class Bboxes2Heatmap(torch.nn.Module):
         probs = xprob*yprob
         if self.use_sigmoid:
             scores = torch.sigmoid(scores)
-            heatmap = torch.sum(scores[..., None, None]*probs, 1)
-            heatmap = heatmap / torch.amax(heatmap, [1, 2], True)  # ensure 0-1
         else:
             scores = torch.softmax(scores, 1)
-            heatmap = torch.sum(scores[..., None, None]*probs, 1)
-            heatmap = heatmap / torch.amax(heatmap, [1, 2], True)  # ensure 0-1
+        heatmap = torch.sum(scores[..., None, None]*probs, 1)
+        heatmap = heatmap / (1e-5+torch.amax(heatmap, [1, 2], True))  # max=1
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):
@@ -299,6 +299,4 @@ class LogisticHeatmap(Bboxes2Heatmap):
         x2 = cx + bw/2
         logistic0 = 1/(1+torch.exp(-k*(x-x1)))
         logistic1 = 1 - 1/(1+torch.exp(-k*(x-x2)))
-        r = logistic0 * logistic1
-        r = r / r.amax(1, True)  # divide by max so it's not smaller than 1
-        return r
+        return logistic0 * logistic1
