@@ -53,7 +53,7 @@ class Birds(torch.utils.data.Dataset):
         mask = torchvision.tv_tensors.Mask(torchvision.io.read_image(mask, torchvision.io.ImageReadMode.GRAY))
         if self.crop:
             bbox = self.bboxes[i]
-            image = image[bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
+            image = image[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
@@ -83,7 +83,7 @@ class StanfordCars:
         label = d['class']-1
         if self.crop:
             bbox = (d['bbox_x1'], d['bbox_y1'], d['bbox_x2'], d['bbox_y2'])
-            image = image[bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
+            image = image[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
@@ -119,7 +119,7 @@ class StanfordDogs:
                 max(bb['xmax'] for bb in bboxes),
                 max(bb['ymax'] for bb in bboxes),
             )
-            image = image[bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
+            image = image[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label

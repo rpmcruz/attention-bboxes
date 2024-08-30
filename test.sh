@@ -22,7 +22,6 @@ done
 # baseline: protopnet
 model="model-$dataset-ProtoPNet.pth"
 python3 test.py $model $dataset --protopnet
-model="model-$dataset-ProtoPNet.pth"
 python3 test.py $model $dataset --protopnet --crop
 
 # proposal (with ablation)

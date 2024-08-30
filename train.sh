@@ -5,7 +5,8 @@ PENALTIES="0 0.001 0.1 1 10"
 
 for DATASET in $DATASETS; do
 
-MODELS="OnlyClass ProtoPNet ViT"
+#MODELS="OnlyClass ProtoPNet ViT"
+MODELS="OnlyClass"
 for MODEL in $MODELS; do
 NAME="model-$DATASET-$MODEL.pth"
 if [ ! -f $NAME ]; then

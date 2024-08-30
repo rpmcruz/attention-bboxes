@@ -69,9 +69,9 @@ for i, (x, mask, y) in enumerate(ts):
             pred, dist = model(x)
             heatmap = model.distance_2_similarity(model.prototype_distances(x))
             # ProtoPNet heatmaps are for each prototype
-            # - should we use mean or max to merge them?
-            heatmap = heatmap.max(1)
-            heatmap = (heatmap - heatmap.amin((1, 2), True)) / (heatmap.amax((1, 2), True) - heatmap.amin((1, 2), True))
+            # - should we use mean or amax to merge them?
+            heatmap = heatmap.amax(1)
+            heatmap = (heatmap - heatmap.amin((1, 2), True)) / (heatmap.amax((1, 2), True) - heatmap.amin((1, 2), True) + 1e-6)
             pred = {'class': pred, 'heatmap': heatmap}
         else:
             pred = model(x)
