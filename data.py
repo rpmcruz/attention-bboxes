@@ -24,17 +24,18 @@ class SubsetLabels(torch.utils.data.Dataset):
 class Birds(torch.utils.data.Dataset):
     # https://www.vision.caltech.edu/datasets/cub_200_2011/
     num_classes = 200
-    def __init__(self, root, split, transform=None, crop=False):
+    def __init__(self, root, fold, transform=None, crop=False):
         self.root = os.path.join(root, 'CUB_200_2011')
         files = open(os.path.join(self.root, 'images.txt'))
         split = open(os.path.join(self.root, 'train_test_split.txt'))
         bboxes = open(os.path.join(self.root, 'bounding_boxes.txt'))
         # I don't know if split=0 is test and split=1 is train but I am assuming
         # train=1 since split=0 49% and split=1 51%
-        train = int(split == 'train')
-        self.files = [f.split()[1] for f, s in zip(files, split) if int(s.split()[1]) == train]
+        fold = int(fold == 'train')
+        ix = [int(s.split()[1]) == fold for s in split]
+        self.files = [f.split()[1] for f, i in zip(files, ix) if i]
         self.labels = [int(f[:f.index('.')])-1 for f in self.files]
-        self.bboxes = [[int(float(v)) for v in line.split()[1:]] for line in bboxes]
+        self.bboxes = [[int(float(v)) for v in line.split()[1:]] for line, i in zip(bboxes, ix) if i]
         self.class_names = [line.split()[1][4:-1] for line in open(os.path.join(self.root, 'classes.txt'))]
         self.transform = transform
         self.crop = crop
@@ -52,8 +53,9 @@ class Birds(torch.utils.data.Dataset):
         mask = os.path.join(self.root, 'segmentations', fname[:-3] + 'png')
         mask = torchvision.tv_tensors.Mask(torchvision.io.read_image(mask, torchvision.io.ImageReadMode.GRAY))
         if self.crop:
-            bbox = self.bboxes[i]
+            bbox = self.bboxes[i]  # their bbox=(x, y, w, h)
             image = image[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
+            mask = mask[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
@@ -78,14 +80,16 @@ class StanfordCars:
     def __getitem__(self, i):
         d = self.data[i]
         image = torchvision.io.read_image(os.path.join(self.root, d['fname']), torchvision.io.ImageReadMode.RGB)
-        mask = torchvision.tv_tensors.Mask(torch.zeros(1, image.shape[1], image.shape[2], dtype=bool))
-        mask[0, d['bbox_y1']:d['bbox_y2']+1, d['bbox_x1']:d['bbox_x2']+1] = True
+        bbox = (d['bbox_x1'], d['bbox_y1'], d['bbox_x2'], d['bbox_y2'])
         label = d['class']-1
         if self.crop:
-            bbox = (d['bbox_x1'], d['bbox_y1'], d['bbox_x2'], d['bbox_y2'])
-            image = image[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
-        if self.transform:
-            image, mask = self.transform(image, mask)
+            image = image[:, bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
+            mask = torch.ones(1, bbox[3]-bbox[1]+1, bbox[2]-bbox[0]+1, dtype=bool)
+            print('image:', image.shape, 'mask:', mask.shape)
+        else:
+            mask = torch.zeros(1, image.shape[1], image.shape[2], dtype=bool)
+            mask[0, bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1] = True
+        mask = torchvision.tv_tensors.Mask(mask)
         return image, mask, label
 
 class StanfordDogs:
@@ -109,17 +113,16 @@ class StanfordDogs:
         image = torchvision.io.read_image(os.path.join(self.root, 'Images', fname), torchvision.io.ImageReadMode.RGB)
         ann = ET.parse(os.path.join(self.root, 'Annotation', fname[:-4]))
         bboxes = [{c.tag: int(c.text) for c in bbox} for bbox in ann.findall('.//bndbox')]
-        mask = torchvision.tv_tensors.Mask(torch.zeros(1, image.shape[1], image.shape[2], dtype=bool))
-        for bbox in bboxes:
-            mask[0, bbox['ymin']:bbox['ymax']+1, bbox['xmin']:bbox['xmax']+1] = True
         if self.crop:
-            bbox = (
-                min(bb['xmin'] for bb in bboxes),
-                min(bb['ymin'] for bb in bboxes),
-                max(bb['xmax'] for bb in bboxes),
-                max(bb['ymax'] for bb in bboxes),
-            )
-            image = image[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
+            bbox = (min(bb['xmin'] for bb in bboxes), min(bb['ymin'] for bb in bboxes),
+                    max(bb['xmax'] for bb in bboxes), max(bb['ymax'] for bb in bboxes))
+            image = image[:, bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
+            mask = torch.ones(1, bbox[3]-bbox[1]+1, bbox[2]-bbox[0]+1, dtype=bool)
+        else:
+            mask = torch.zeros(1, image.shape[1], image.shape[2], dtype=bool)
+            for bbox in bboxes:
+                mask[0, bbox['ymin']:bbox['ymax']+1, bbox['xmin']:bbox['xmax']+1] = True
+        mask = torchvision.tv_tensors.Mask(mask)
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
@@ -128,8 +131,9 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('dataset')
+    parser.add_argument('--crop', action='store_true')
     args = parser.parse_args()
-    ds = globals()[args.dataset]('/data/toys', 'train')
+    ds = globals()[args.dataset]('/data/toys', 'train', None, args.crop)
     #from tqdm import tqdm
     #for k, n in enumerate(torch.bincount(torch.tensor([y for _, _, y in tqdm(ds)]))):
     #    print(k, n)
