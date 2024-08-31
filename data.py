@@ -51,11 +51,12 @@ class Birds(torch.utils.data.Dataset):
         image = os.path.join(self.root, 'images', fname)
         image = torchvision.io.read_image(image, torchvision.io.ImageReadMode.RGB)
         mask = os.path.join(self.root, 'segmentations', fname[:-3] + 'png')
-        mask = torchvision.tv_tensors.Mask(torchvision.io.read_image(mask, torchvision.io.ImageReadMode.GRAY))
+        mask = torchvision.io.read_image(mask, torchvision.io.ImageReadMode.GRAY)
         if self.crop:
             bbox = self.bboxes[i]  # their bbox=(x, y, w, h)
             image = image[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
             mask = mask[:, bbox[1]:bbox[1]+bbox[3]+1, bbox[0]:bbox[0]+bbox[2]+1]
+        mask = torchvision.tv_tensors.Mask(mask)
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
@@ -85,11 +86,12 @@ class StanfordCars:
         if self.crop:
             image = image[:, bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
             mask = torch.ones(1, bbox[3]-bbox[1]+1, bbox[2]-bbox[0]+1, dtype=bool)
-            print('image:', image.shape, 'mask:', mask.shape)
         else:
             mask = torch.zeros(1, image.shape[1], image.shape[2], dtype=bool)
             mask[0, bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1] = True
         mask = torchvision.tv_tensors.Mask(mask)
+        if self.transform:
+            image, mask = self.transform(image, mask)
         return image, mask, label
 
 class StanfordDogs:
@@ -99,7 +101,7 @@ class StanfordDogs:
         self.root = os.path.join(root, 'stanford_dogs')
         l = loadmat(os.path.join(self.root, f'{split}_list.mat'), simplify_cells=True)
         self.files = l['file_list']
-        self.labels = l['labels']-1
+        self.labels = l['labels'].astype(int)-1
         self.class_names = ['-'.join(species.split('-')[1:]) for species in sorted(os.listdir(os.path.join(root, 'stanford_dogs', 'Images')))]
         self.transform = transform
         self.crop = crop

@@ -9,7 +9,7 @@ import numpy as np
 df = pd.read_csv(args.results)
 df['l1'] = [model.split('-')[4] if model.count('-') >= 5 else '' for model in df['model']]
 df['heatmap'] = [model.split('-')[6] if model.count('-') >= 7 else '' for model in df['model']]
-df['model'] = [model.split('-')[2] for model in df['model']]
+df['model'] = [model.split('-')[2] + (f' (crop)' if crop else '') if not type(captum) == str else captum for model, captum, crop in zip(df['model'], df['captum'], df['crop'])]
 
 # choose highest pg score
 score = 'degscore'
@@ -22,7 +22,7 @@ df = df.groupby(['model', 'dataset', 'heatmap'], as_index=False).apply(get_max_p
 
 # re-order rows
 dataset_order = ['Birds', 'StanfordCars', 'StanfordDogs']
-model_order = ['OnlyClass', 'ProtoPNet', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR']
+model_order = ['OnlyClass', 'IntegratedGradients', 'GuidedGradCAM', 'ProtoPNet', 'ProtoPNet (crop)', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR']
 df['dataset'] = pd.Categorical(df['dataset'], categories=dataset_order, ordered=True)
 df['model'] = pd.Categorical(df['model'], categories=model_order, ordered=True)
 df = df.sort_values(by=['dataset', 'model']).reset_index(drop=True)

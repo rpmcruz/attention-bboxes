@@ -124,8 +124,8 @@ for epoch in range(args.epochs):
             for module in [backbone, classifier]:
                 for param in module.parameters():
                     param.requires_grad = False
-            adv_loss = torch.nn.functional.cross_entropy(pred['min_class'], y) + \
-                -torch.nn.functional.cross_entropy(pred['max_class'], y)
+            adv_loss = -torch.nn.functional.cross_entropy(pred['max_class'], y)
+            #torch.nn.functional.cross_entropy(pred['min_class'], y)
             adv_loss.backward()
             for module in [backbone, classifier]:
                 for param in module.parameters():

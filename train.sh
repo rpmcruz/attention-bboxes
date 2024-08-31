@@ -26,14 +26,23 @@ done
 
 MODELS="SimpleDet FasterRCNN FCOS DETR"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
+OCCLUSIONS="image encoder"
+
 for HEATMAP in $HEATMAPS; do
 for MODEL in $MODELS; do
 for PENALTY in $PENALTIES; do
-NAME="model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-sigmoid.pth"
+for OCCLUSION in $OCCLUSIONS; do
+NAME="model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-occlusion-$OCCLUSION-sigmoid.pth"
 if [ ! -f $NAME ]; then
 echo $NAME
-sbatch --short python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --sigmoid
+sbatch --short python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --occlusion $OCCLUSION --sigmoid
 fi
+NAME="model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-occlusion-$OCCLUSION-sigmoid-adversarial.pth"
+if [ ! -f $NAME ]; then
+echo $NAME
+sbatch --short python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --occlusion $OCCLUSION --sigmoid --adversarial
+fi
+done
 done
 done
 done

@@ -29,24 +29,18 @@ class Occlusion(torch.nn.Module):
             heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
             det['heatmap'] = self.bboxes2heatmap(heatmap_shape, det['bboxes'], det['scores'])
         heatmap = det['heatmap']
-        if self.is_adversarial:
-            if self.occlusion_level == 'encoder':
-                min_embed = heatmap[:, None] * embed
-                max_embed = (1-heatmap)[:, None] * embed
-            else:  # image
-                min_embed = self.backbone(heatmap[:, None] * images)
-                max_embed = self.backbone((1-heatmap)[:, None] * images)
-            return {
-                'class': self.classifier(embed),
-                'min_class': self.classifier(min_embed),
-                'max_class': self.classifier(max_embed),
-                **det
-            }
-        if self.occlusion_level == 'encoder':
+        if self.occlusion_level == 'image':
+            embed = self.backbone(heatmap[:, None] * images)
+        else:  # encoder
             embed = heatmap[:, None] * embed
-            return {
-                'class': self.classifier(embed), **det
-            }
+        ret = {'class': self.classifier(embed), **det}
+        if self.is_adversarial:
+            if self.occlusion_level == 'image':
+                max_embed = self.backbone((1-heatmap)[:, None] * images)
+            else:  # encoder
+                max_embed = (1-heatmap)[:, None] * embed
+            ret['max_class'] = self.classifier(max_embed)
+        return ret
 
 class Backbone(torch.nn.Module):
     def __init__(self):
@@ -272,31 +266,38 @@ class Bboxes2Heatmap(torch.nn.Module):
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
         scale = torch.tensor([output_shape[1], output_shape[0]]*2, device=bboxes.device)
         bboxes = scale[None, :, None]*bboxes
-        xprob = self.f(xx[None, None], bboxes[:, 0][..., None, None], bboxes[:, 2][..., None, None])
-        yprob = self.f(yy[None, None], bboxes[:, 1][..., None, None], bboxes[:, 3][..., None, None])
-        # avoid the pdf being too big for a single pixel
-        #probs = torch.clamp(xprob*yprob, max=1)
-        probs = xprob*yprob
+        heatmaps = self.f(xx[None, None], yy[None, None], bboxes[:, 0][..., None, None], bboxes[:, 1][..., None, None], bboxes[:, 2][..., None, None], bboxes[:, 3][..., None, None])
         if self.use_sigmoid:
             scores = torch.sigmoid(scores)
         else:
             scores = torch.softmax(scores, 1)
-        heatmap = torch.sum(scores[..., None, None]*probs, 1)
+        heatmap = torch.sum(scores[..., None, None]*heatmaps, 1)
         heatmap = heatmap / (1e-5+torch.amax(heatmap, [1, 2], True))  # max=1
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):
-    def f(self, x, cx, bw):
-        avg, stdev = cx, bw
-        assert stdev.amin() > 0, 'bbox width or height has negative value ' + str(stdev.amin().item())
-        sqrt2pi = (2*torch.pi)**0.5
-        return (1/(stdev*sqrt2pi)) * torch.exp(-0.5*(((x-avg)/stdev)**2))
+    def f(self, x, y, xc, yc, w, h):
+        # https://en.wikipedia.org/wiki/Gaussian_function
+        # assuming sigma=width/height
+        xx = (x-xc)**2
+        yy = (y-yc)**2
+        ww = w**2
+        hh = h**2
+        a = 1
+        return a*torch.exp(-(xx*hh+yy*ww)/(2*ww*hh))
 
 class LogisticHeatmap(Bboxes2Heatmap):
-    def f(self, x, cx, bw):
+    def f(self, x, y, xc, yc, w, h):
+        # https://en.wikipedia.org/wiki/Logistic_function
         k = 1
-        x1 = cx - bw/2
-        x2 = cx + bw/2
-        logistic0 = 1/(1+torch.exp(-k*(x-x1)))
-        logistic1 = 1 - 1/(1+torch.exp(-k*(x-x2)))
-        return logistic0 * logistic1
+        x1 = k*(x - (xc-w/2))
+        x2 = k*(x - (xc+w/2))
+        y1 = k*(x - (yc-h/2))
+        y2 = k*(x - (yc+h/2))
+        exp_x1 = torch.exp(-x1)
+        exp_x2 = torch.exp(-x2)
+        exp_y1 = torch.exp(-y1)
+        exp_y2 = torch.exp(-y2)
+        logistic_x = exp_x2/((1+exp_x1)*(1+exp_x2))
+        logistic_y = exp_y2/((1+exp_y1)*(1+exp_y2))
+        return logistic_x*logistic_y
