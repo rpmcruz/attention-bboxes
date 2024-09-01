@@ -30,13 +30,13 @@ class Occlusion(torch.nn.Module):
             det['heatmap'] = self.bboxes2heatmap(heatmap_shape, det['bboxes'], det['scores'])
         heatmap = det['heatmap']
         if self.occlusion_level == 'image':
-            embed = self.backbone(heatmap[:, None] * images)
+            embed = self.backbone(heatmap[:, None] * images)[-1]
         else:  # encoder
             embed = heatmap[:, None] * embed
         ret = {'class': self.classifier(embed), **det}
         if self.is_adversarial:
             if self.occlusion_level == 'image':
-                max_embed = self.backbone((1-heatmap)[:, None] * images)
+                max_embed = self.backbone((1-heatmap)[:, None] * images)[-1]
             else:  # encoder
                 max_embed = (1-heatmap)[:, None] * embed
             ret['max_class'] = self.classifier(max_embed)

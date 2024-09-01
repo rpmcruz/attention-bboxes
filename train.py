@@ -117,8 +117,6 @@ for epoch in range(args.epochs):
             avg_metrics['bbox_size'] = avg_metrics.get('bbox_size', 0) + float(torch.mean(pred['bboxes'][:, 2:]))/len(tr)
         opt.zero_grad()
         loss.backward(retain_graph=args.adversarial)
-        opt.step()
-        avg_losses['loss'] = avg_losses.get('loss', 0) + float(loss)/len(tr)
         if args.adversarial:
             # temporarily disable gradients for backbone and classifier
             for module in [backbone, classifier]:
@@ -132,6 +130,7 @@ for epoch in range(args.epochs):
                     param.requires_grad = True
             avg_losses['adv'] = avg_losses.get('adv', 0) + float(adv_loss)/len(tr)
         avg_losses['loss'] = avg_losses.get('loss', 0) + float(loss)/len(tr)
+        opt.step()
         avg_metrics['acc'] = avg_metrics.get('acc', 0) + (y == pred['class'].argmax(1)).float().mean()/len(tr)
         if 'heatmap' in pred:
             masks = masks.to(device)
