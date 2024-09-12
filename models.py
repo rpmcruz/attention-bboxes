@@ -30,13 +30,14 @@ class Occlusion(torch.nn.Module):
             det['heatmap'] = self.bboxes2heatmap(heatmap_shape, det['bboxes'], det['scores'])
         heatmap = det['heatmap']
         if self.occlusion_level == 'image':
-            embed = self.backbone(heatmap[:, None] * images)[-1]
+            heatmap_image = torch.nn.functional.interpolate(heatmap[:, None], images.shape[2:], mode='bilinear')
+            embed = self.backbone(heatmap_image * images)[-1]
         else:  # encoder
             embed = heatmap[:, None] * embed
         ret = {'class': self.classifier(embed), **det}
         if self.is_adversarial:
             if self.occlusion_level == 'image':
-                max_embed = self.backbone((1-heatmap)[:, None] * images)[-1]
+                max_embed = self.backbone((1-heatmap_image) * images)[-1]
             else:  # encoder
                 max_embed = (1-heatmap)[:, None] * embed
             ret['max_class'] = self.classifier(max_embed)
@@ -292,8 +293,8 @@ class LogisticHeatmap(Bboxes2Heatmap):
         k = 1
         x1 = k*(x - (xc-w/2))
         x2 = k*(x - (xc+w/2))
-        y1 = k*(x - (yc-h/2))
-        y2 = k*(x - (yc+h/2))
+        y1 = k*(y - (yc-h/2))
+        y2 = k*(y - (yc+h/2))
         exp_x1 = torch.exp(-x1)
         exp_x2 = torch.exp(-x2)
         exp_y1 = torch.exp(-y1)

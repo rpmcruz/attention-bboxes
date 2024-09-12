@@ -16,17 +16,24 @@ fi
 done
 
 MODEL=Heatmap
+OCCLUSIONS="image encoder"
+for OCCLUSION in $OCCLUSIONS; do
 for PENALTY in $PENALTIES; do
-NAME="model-$DATASET-$MODEL-l1-$PENALTY-sigmoid.pth"
+NAME="model-$DATASET-$MODEL-l1-$PENALTY-occlusion-$OCCLUSION-sigmoid.pth"
 if [ ! -f $NAME ]; then
 echo $NAME
-sbatch --short python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --sigmoid
+sbatch --short python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --occlusion $OCCLUSION --sigmoid
 fi
+NAME="model-$DATASET-$MODEL-l1-$PENALTY-occlusion-$OCCLUSION-sigmoid-adversarial.pth"
+if [ ! -f $NAME ]; then
+echo $NAME
+sbatch --short python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --occlusion $OCCLUSION --sigmoid --adversarial
+fi
+done
 done
 
 MODELS="SimpleDet FasterRCNN FCOS DETR"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
-OCCLUSIONS="image encoder"
 
 for HEATMAP in $HEATMAPS; do
 for MODEL in $MODELS; do

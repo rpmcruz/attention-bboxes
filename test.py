@@ -2,18 +2,19 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('model')
 parser.add_argument('dataset')
-parser.add_argument('--captum')
+parser.add_argument('--xai')
 parser.add_argument('--protopnet', action='store_true')
 parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--visualize', action='store_true')
 parser.add_argument('--crop', action='store_true')
+parser.add_argument('--batchsize', type=int, default=8)
 parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
 import torch
 from torchvision.transforms import v2
 import torchmetrics
-import data, metrics, utils
+import data, metrics, utils, xai
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 import warnings
@@ -29,7 +30,7 @@ transforms = v2.Compose([
 # we are testing with the train-set itself for now
 ds = getattr(data, args.dataset)
 ts = ds('/data/toys', 'test', transforms, args.crop)
-ts = torch.utils.data.DataLoader(ts, 8, num_workers=4, pin_memory=True)
+ts = torch.utils.data.DataLoader(ts, args.batchsize, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
 
@@ -40,17 +41,8 @@ model = torch.load(args.model, map_location=device)
 
 ########################### BASELINES ###########################
 
-captum_heatmap = None
-if args.captum == 'IntegratedGradients':
-    from captum.attr import IntegratedGradients
-    ig = IntegratedGradients(model)
-    def captum_heatmap(x, y):
-        return ig.attribute(x, target=y)
-if args.captum == 'GuidedGradCAM':
-    from captum.attr import GuidedGradCam
-    ggc = GuidedGradCam(model, model.backbone.resnet.layer4)
-    def captum_heatmap(x, y):
-        return ggc.attribute(x, y)
+resnet = model.features if args.protopnet else model.backbone.resnet
+generate_heatmap = getattr(xai, args.xai) if args.xai else None
 
 ############################# LOOP #############################
 
@@ -64,30 +56,31 @@ for i, (x, mask, y) in enumerate(ts):
     x = x.to(device)
     mask = mask.to(device)
     y = y.to(device)
-    with torch.no_grad():
-        if args.protopnet:
+    if args.protopnet:
+        with torch.no_grad():
             pred, dist = model(x)
-            heatmap = model.distance_2_similarity(model.prototype_distances(x))
-            # ProtoPNet heatmaps are for each prototype
-            # - should we use mean or amax to merge them?
-            heatmap = heatmap.amax(1)
-            heatmap = (heatmap - heatmap.amin((1, 2), True)) / (heatmap.amax((1, 2), True) - heatmap.amin((1, 2), True) + 1e-6)
-            pred = {'class': pred, 'heatmap': heatmap}
-        else:
+        # this is a heatmap for each prototype: (N, K, 7, 7)
+        heatmap = model.distance_2_similarity(model.prototype_distances(x))
+        # get only the heatmaps of the respective prototype class
+        heatmap = torch.cat([heatmap[[i], y[i]*10:(y[i]+1)*10] for i in range(len(y))])
+        # get the maximum activation across those prototypes
+        heatmap = torch.nn.functional.relu(heatmap.amax(1))
+        pred = {'class': pred, 'heatmap': heatmap}
+    else:
+        with torch.no_grad():
             pred = model(x)
-        acc.update(pred['class'].argmax(1), y)
-        if captum_heatmap != None:
-            model.return_dict = False
-            heatmap = captum_heatmap(x, y)
-            heatmap = heatmap.mean(1)
-            # make heatmap 7x7 like the others to make it faster
-            heatmap = torch.nn.functional.interpolate(heatmap[:, None], (7, 7), mode='bilinear')[:, 0]
-            pred['heatmap'] = heatmap
-            model.return_dict = True
-        if 'heatmap' in pred:
-            pg.update(pred['heatmap'], mask)
-            deg_score.update(x, y, pred['heatmap'])
-            sparsity.update(pred['heatmap'])
+    acc.update(pred['class'].argmax(1), y)
+    if generate_heatmap != None:
+        pred['heatmap'] = generate_heatmap(model, resnet.layer4, resnet.fc, x, y)
+    if 'heatmap' in pred:
+        pg.update(pred['heatmap'], mask)
+        sparsity.update(pred['heatmap'])
+        # degradation score is too slow and requires too much vram, therefore downsample heatmaps that
+        # are too large (like those produced by occlusion=image)
+        heatmap = pred['heatmap']
+        if heatmap.shape[-1] > 7:
+            heatmap = torch.nn.functional.interpolate(pred['heatmap'][:, None], (7, 7), mode='bilinear')[:, 0]
+        deg_score.update(x, y, heatmap)
     if args.visualize and i == 0:
         import matplotlib.pyplot as plt
         plt.rcParams['figure.figsize'] = (18, 8)
@@ -105,4 +98,4 @@ for i, (x, mask, y) in enumerate(ts):
     if args.debug:
         break
 
-print(args.model[:-4], args.dataset, args.captum, args.crop, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')
+print(args.model[:-4], args.dataset, args.xai, args.crop, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')
