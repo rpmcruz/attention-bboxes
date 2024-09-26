@@ -5,10 +5,9 @@ parser.add_argument('dataset')
 parser.add_argument('--xai')
 parser.add_argument('--protopnet', action='store_true')
 parser.add_argument('--nstdev', type=float, default=1)
-parser.add_argument('--visualize', action='store_true')
 parser.add_argument('--crop', action='store_true')
 parser.add_argument('--batchsize', type=int, default=8)
-parser.add_argument('--debug', action='store_true')
+parser.add_argument('--visualize', action='store_true')
 args = parser.parse_args()
 
 import torch
@@ -38,6 +37,7 @@ if args.protopnet:
     import sys
     sys.path.append('protopnet')
 model = torch.load(args.model, map_location=device)
+model.eval()
 
 ########################### BASELINES ###########################
 
@@ -51,7 +51,6 @@ pg = metrics.PointingGame().to(device)
 deg_score = metrics.DegradationScore(model).to(device)
 sparsity = metrics.Sparsity().to(device)
 
-model.eval()
 for i, (x, mask, y) in enumerate(ts):
     x = x.to(device)
     mask = mask.to(device)
@@ -71,7 +70,7 @@ for i, (x, mask, y) in enumerate(ts):
             pred = model(x)
     acc.update(pred['class'].argmax(1), y)
     if generate_heatmap != None:
-        pred['heatmap'] = generate_heatmap(model, resnet.layer4, resnet.fc, x, y)
+        pred['heatmap'] = generate_heatmap(model, resnet.layer4[-1].conv3, resnet.fc, x, y)
     if 'heatmap' in pred:
         pg.update(pred['heatmap'], mask)
         sparsity.update(pred['heatmap'])
@@ -88,14 +87,14 @@ for i, (x, mask, y) in enumerate(ts):
         for i in range(4):
             plt.subplot(2, 4, i+1)
             if 'bboxes' in pred:
-                utils.draw_bboxes(x[i], pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
+                utils.draw_bboxes(x[i].detach(), pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
+            else:
+                utils.draw_image(x[i].detach())
             plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
             if 'heatmap' in pred:
                 plt.subplot(2, 4, i+4+1)
-                utils.draw_heatmap(x[i], pred['heatmap'][i].detach())
+                utils.draw_heatmap(x[i].detach(), pred['heatmap'][i].detach())
         plt.suptitle(f'{args.model[:-4]}')
         plt.savefig(f'{args.model}.png')
-    if args.debug:
-        break
 
 print(args.model[:-4], args.dataset, args.xai, args.crop, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')

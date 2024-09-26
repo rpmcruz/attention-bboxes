@@ -100,7 +100,8 @@ for epoch in range(args.epochs):
     tic = time()
     avg_losses = {}
     avg_metrics = {}
-    for x, masks, y in tqdm(tr, 'stage1'):
+    #for x, masks, y in tqdm(tr, 'stage1'):
+    for x, masks, y in tr:
         x = x.to(device)
         y = y.to(device)
         pred = model(x)

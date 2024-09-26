@@ -23,8 +23,8 @@ class Occlusion(torch.nn.Module):
             return {'class': self.classifier(embed)}
         det = self.detection(features)
         if 'bboxes' in det:
-            # for numerical reasons (avoid div0), minimum size for width/height
-            det['bboxes'] = torch.cat((det['bboxes'][:, :2], det['bboxes'][:, 2:] + 1e-3), 1)
+            # for numerical reasons (div0), set minimum size for width/height
+            det['bboxes'] = torch.cat((det['bboxes'][:, :2], det['bboxes'][:, 2:] + 0.01), 1)
         if 'heatmap' not in det:
             heatmap_shape = embed.shape[2:] if self.occlusion_level == 'encoder' else images.shape[2:]
             det['heatmap'] = self.bboxes2heatmap(heatmap_shape, det['bboxes'], det['scores'])
@@ -261,44 +261,35 @@ class Bboxes2Heatmap(torch.nn.Module):
         self.use_sigmoid = use_sigmoid
 
     def forward(self, output_shape, bboxes, scores):
-        device = bboxes.device
-        xx = torch.arange(output_shape[1], device=device)
-        yy = torch.arange(output_shape[0], device=device)
+        h, w = output_shape
+        xx = torch.arange((1/w)/2, 1, 1/w, device=bboxes.device)
+        yy = torch.arange((1/h)/2, 1, 1/h, device=bboxes.device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
-        scale = torch.tensor([output_shape[1], output_shape[0]]*2, device=bboxes.device)
-        bboxes = scale[None, :, None]*bboxes
         heatmaps = self.f(xx[None, None], yy[None, None], bboxes[:, 0][..., None, None], bboxes[:, 1][..., None, None], bboxes[:, 2][..., None, None], bboxes[:, 3][..., None, None])
+        heatmaps = heatmaps / (1e-5+torch.amax(heatmaps, 1, True))  # max=1
         if self.use_sigmoid:
             scores = torch.sigmoid(scores)
         else:
             scores = torch.softmax(scores, 1)
         heatmap = torch.sum(scores[..., None, None]*heatmaps, 1)
-        heatmap = heatmap / (1e-5+torch.amax(heatmap, [1, 2], True))  # max=1
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):
-    def f(self, x, y, xc, yc, w, h):
+    def f(self, x, y, xc, yc, sigma_w, sigma_h):
         # https://en.wikipedia.org/wiki/Gaussian_function
+        # \operatorname{exp}(-2\frac{(x-c)^{2}}{2(\frac{w}{2})^{2}})
         # assuming sigma=width/height
         xx = (x-xc)**2
         yy = (y-yc)**2
-        ww = w**2
-        hh = h**2
-        a = 1
-        return a*torch.exp(-(xx*hh+yy*ww)/(2*ww*hh))
+        ww = (sigma_w/2)**2
+        hh = (sigma_h/2)**2
+        return torch.exp(-(xx*hh+yy*ww)/(2*ww*hh))
 
 class LogisticHeatmap(Bboxes2Heatmap):
     def f(self, x, y, xc, yc, w, h):
         # https://en.wikipedia.org/wiki/Logistic_function
-        k = 1
-        x1 = k*(x - (xc-w/2))
-        x2 = k*(x - (xc+w/2))
-        y1 = k*(y - (yc-h/2))
-        y2 = k*(y - (yc+h/2))
-        exp_x1 = torch.exp(-x1)
-        exp_x2 = torch.exp(-x2)
-        exp_y1 = torch.exp(-y1)
-        exp_y2 = torch.exp(-y2)
-        logistic_x = exp_x2/((1+exp_x1)*(1+exp_x2))
-        logistic_y = exp_y2/((1+exp_y1)*(1+exp_y2))
+        # \frac{\operatorname{exp}(-k(x-(c+\frac{w}{2})))}{(1+\operatorname{exp}(-k(x-(c-\frac{w}{2}))))\times (1+\operatorname{exp}(-k(x-(c+\frac{w}{2}))))}
+        k = 50
+        logistic_x = torch.sigmoid(k*(x-(xc-w/2))) * (1-torch.sigmoid(k*(x-(xc+w/2))))
+        logistic_y = torch.sigmoid(k*(y-(yc-h/2))) * (1-torch.sigmoid(k*(y-(yc+h/2))))
         return logistic_x*logistic_y

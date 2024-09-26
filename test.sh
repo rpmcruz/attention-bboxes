@@ -3,7 +3,7 @@
 #DATASETS="Birds StanfordCars StanfordDogs"
 DATASETS="$1"
 PENALTIES="0 0.001 0.1 1 10"
-XAI="CAM GradCAM DeepLIFT"
+XAI="CAM GradCAM DeepLIFT Occlusion"
 MODELS="SimpleDet FasterRCNN FCOS DETR"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
 # only encoder occlusion due to time constrains

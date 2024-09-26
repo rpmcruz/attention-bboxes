@@ -8,8 +8,11 @@ def unnormalize(image):
     image = image*std + mean
     return image.permute(1, 2, 0)
 
-def draw_bboxes(image, bboxes, scores, nstdev=1):
+def draw_image(image):
     plt.imshow(unnormalize(image).cpu())
+
+def draw_bboxes(image, bboxes, scores, nstdev=1):
+    draw_image(image)
     # 68.27% of the data falls within 1 stddev of the mean
     # 86.64% of the data falls within 1.5 stddevs of the mean
     # 95.44% of the data falls within 2 stddevs of the mean
@@ -29,6 +32,9 @@ def draw_bboxes(image, bboxes, scores, nstdev=1):
     plt.ylim(ylim[::-1])
 
 def draw_heatmap(image, heatmap):
-    heatmap = torch.nn.functional.interpolate(heatmap[None, None], image.shape[1:], mode='bilinear')[0]
-    show = image*heatmap
-    plt.imshow(unnormalize(show).cpu(), vmin=0, vmax=1)
+    heatmap = torch.nn.functional.interpolate(heatmap[None, None], image.shape[1:], mode='bilinear')[0, 0]
+    heatmap = torch.nn.functional.relu(heatmap)
+    heatmap /= heatmap.amax()
+    image = unnormalize(image)
+    show = image*heatmap[..., None]
+    plt.imshow(show.cpu(), vmin=0, vmax=1)
