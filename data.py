@@ -61,6 +61,12 @@ class Birds(torch.utils.data.Dataset):
             image, mask = self.transform(image, mask)
         return image, mask, label
 
+# for debugging
+def Birds2(root, fold, transform, crop=False):
+    return SubsetLabels(Birds(root, fold, transform, crop), range(2))
+def Birds10(root, fold, transform, crop=False):
+    return SubsetLabels(Birds(root, fold, transform, crop), range(10))
+
 class StanfordCars:
     # https://www.kaggle.com/datasets/jessicali9530/stanford-cars-dataset
     num_classes = 196

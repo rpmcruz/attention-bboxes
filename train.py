@@ -1,7 +1,7 @@
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('output')
-parser.add_argument('dataset', choices=['Birds', 'StanfordCars', 'StanfordDogs'])
+parser.add_argument('dataset')#, choices=['Birds', 'StanfordCars', 'StanfordDogs'])
 parser.add_argument('model', choices=['ProtoPNet', 'ViT', 'OnlyClass', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR'])
 parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'], default='GaussHeatmap')
 parser.add_argument('--sigmoid', action='store_true')

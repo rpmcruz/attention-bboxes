@@ -27,22 +27,24 @@ transforms = v2.Compose([
     v2.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 # we are testing with the train-set itself for now
-ds = getattr(data, args.dataset)
-ts = ds('/data/toys', 'test', transforms, args.crop)
-ts = torch.utils.data.DataLoader(ts, args.batchsize, num_workers=4, pin_memory=True)
+ds = getattr(data, args.dataset)('/data/toys', 'test', transforms, args.crop)
+ts = torch.utils.data.DataLoader(ds, args.batchsize, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
 
 if args.protopnet:
     import sys
     sys.path.append('protopnet')
-model = torch.load(args.model, map_location=device)
+model = torch.load(args.model, map_location=device, weights_only=False)
 model.eval()
 
 ########################### BASELINES ###########################
 
-resnet = model.features if args.protopnet else model.backbone.resnet
-generate_heatmap = getattr(xai, args.xai) if args.xai else None
+xai = getattr(xai, args.xai) if args.xai else None
+if args.protopnet:
+    generate_heatmap = lambda x, y: xai(model, model.features.layer4[-1].conv3, model.features.fc, x, y)
+else:
+    generate_heatmap = lambda x, y: xai(model, model.backbone.resnet.layer4[-1].conv3, model.classifier.output, x, y)
 
 ############################# LOOP #############################
 
@@ -70,7 +72,7 @@ for i, (x, mask, y) in enumerate(ts):
             pred = model(x)
     acc.update(pred['class'].argmax(1), y)
     if generate_heatmap != None:
-        pred['heatmap'] = generate_heatmap(model, resnet.layer4[-1].conv3, resnet.fc, x, y)
+        pred['heatmap'] = generate_heatmap(x, y)
     if 'heatmap' in pred:
         pg.update(pred['heatmap'], mask)
         sparsity.update(pred['heatmap'])
@@ -95,6 +97,7 @@ for i, (x, mask, y) in enumerate(ts):
                 plt.subplot(2, 4, i+4+1)
                 utils.draw_heatmap(x[i].detach(), pred['heatmap'][i].detach())
         plt.suptitle(f'{args.model[:-4]}')
-        plt.savefig(f'{args.model}.png')
+        fname = args.model + '-' + args.xai if args.xai else args.model
+        plt.savefig(fname + '.png')
 
 print(args.model[:-4], args.dataset, args.xai, args.crop, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')
