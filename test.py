@@ -6,7 +6,7 @@ parser.add_argument('--xai')
 parser.add_argument('--protopnet', action='store_true')
 parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--crop', action='store_true')
-parser.add_argument('--batchsize', type=int, default=8)
+parser.add_argument('--batchsize', type=int, default=4)
 parser.add_argument('--visualize', action='store_true')
 args = parser.parse_args()
 
@@ -40,11 +40,13 @@ model.eval()
 
 ########################### BASELINES ###########################
 
-xai = getattr(xai, args.xai) if args.xai else None
-if args.protopnet:
-    generate_heatmap = lambda x, y: xai(model, model.features.layer4[-1].conv3, model.features.fc, x, y)
-else:
-    generate_heatmap = lambda x, y: xai(model, model.backbone.resnet.layer4[-1].conv3, model.classifier.output, x, y)
+generate_heatmap = None
+if args.xai:
+    xai = getattr(xai, args.xai)
+    if args.protopnet:
+        generate_heatmap = lambda x, y: xai(model, model.features.layer4[-1].conv3, model.features.fc, x, y)
+    else:
+        generate_heatmap = lambda x, y: xai(model, model.backbone.resnet.layer4[-1].conv3, model.classifier.output, x, y)
 
 ############################# LOOP #############################
 

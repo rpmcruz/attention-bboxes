@@ -30,9 +30,11 @@ class DegradationScore(torchmetrics.Metric):
         self.add_state('count', default=torch.tensor(0), dist_reduce_fx='sum')
 
     def update(self, images, true_classes, heatmaps):
-        lerf = self.degradation_curve('lerf', self.model, self.score, images, true_classes, heatmaps)
-        morf = self.degradation_curve('morf', self.model, self.score, images, true_classes, heatmaps)
-        self.areas += torch.sum(torch.mean(lerf - morf, 1))
+        # we can give images directly, but iterate to use less memory
+        for image, true_class, heatmap in zip(images, true_classes, heatmaps):
+            lerf = self.degradation_curve('lerf', self.model, self.score, image[None], true_class[None], heatmap[None])
+            morf = self.degradation_curve('morf', self.model, self.score, image[None], true_class[None], heatmap[None])
+            self.areas += torch.sum(torch.mean(lerf - morf, 1))
         self.count += len(images)
 
     def compute(self):
