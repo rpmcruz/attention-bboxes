@@ -30,11 +30,9 @@ class DegradationScore(torchmetrics.Metric):
         self.add_state('count', default=torch.tensor(0), dist_reduce_fx='sum')
 
     def update(self, images, true_classes, heatmaps):
-        # we can give images directly, but iterate to use less memory
-        for image, true_class, heatmap in zip(images, true_classes, heatmaps):
-            lerf = self.degradation_curve('lerf', self.model, self.score, image[None], true_class[None], heatmap[None])
-            morf = self.degradation_curve('morf', self.model, self.score, image[None], true_class[None], heatmap[None])
-            self.areas += torch.sum(torch.mean(lerf - morf, 1))
+        lerf = self.degradation_curve('lerf', self.model, self.score, images, true_classes, heatmaps)
+        morf = self.degradation_curve('morf', self.model, self.score, images, true_classes, heatmaps)
+        self.areas += torch.sum(torch.mean(lerf - morf, 1))
         self.count += len(images)
 
     def compute(self):
@@ -56,21 +54,23 @@ class DegradationScore(torchmetrics.Metric):
         rr = ix // heatmaps.shape[1]
         xscale = images.shape[3] // heatmaps.shape[2]
         yscale = images.shape[2] // heatmaps.shape[1]
-        occlusions = torch.repeat_interleave(images, ix.shape[1], 0)
-        occlusions = occlusions.reshape(images.shape[0], ix.shape[1], *images.shape[1:])
-        for j in range(len(images)):
-            for i, (c, r) in enumerate(zip(cc[j], rr[j])):
-                occlusions[j, i:, :, c*yscale:(c+1)*yscale, r*xscale:(r+1)*xscale] = 0
-        occlusions = occlusions.reshape(-1, *images.shape[1:])
-        with torch.no_grad():
-            ypred = model(occlusions)
+        occlusions = images.clone()
+        # in the past, I did this in a single forward pass to make it faster,
+        # but due to memory contraints, it's better to call as a cycle.
+        scores = []
+        for c, r in zip(cc.T, rr.T):
+            for i, (ci, ri) in enumerate(zip(c, r)):
+                occlusions[i, :, ci*yscale:(ci+1)*yscale, ri*xscale:(ri+1)*xscale] = 0
+            with torch.no_grad():
+                ypred = model(occlusions)
             if type(ypred) == dict:
                 ypred = ypred['class']
             else:
                 ypred = ypred[0]
             ypred = ypred.argmax(1)
-        ypred = ypred.reshape(len(images), -1)
-        return score_fn(ypred, true_classes[:, None])
+            score = score_fn(ypred, true_classes)
+            scores.append(score)
+        return torch.stack(scores, 1)
 
 class Sparsity(torchmetrics.Metric):
     # to measure how sparse the explanation is
