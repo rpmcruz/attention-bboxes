@@ -79,9 +79,11 @@ class Sparsity(torchmetrics.Metric):
         self.add_state('l1', default=torch.tensor(0.), dist_reduce_fx='sum')
         self.add_state('total', default=torch.tensor(0), dist_reduce_fx='sum')
 
-    def update(self, heatmap):
-        self.l1 += torch.mean(heatmap)
-        self.total += len(heatmap)
+    def update(self, heatmaps):
+        assert len(heatmaps.shape) == 3, f'heatmaps have more than three dimensions: {heatmaps.shape}'
+        heatmaps = heatmaps / heatmaps.amax((1, 2), True)
+        self.l1 += torch.sum(torch.mean(heatmaps, (1, 2)))
+        self.total += len(heatmaps)
 
     def compute(self):
         return self.l1 / self.total

@@ -34,7 +34,6 @@ def draw_bboxes(image, bboxes, scores, nstdev=1):
 def draw_heatmap(image, heatmap):
     heatmap = torch.nn.functional.interpolate(heatmap[None, None], image.shape[1:], mode='bilinear')[0, 0]
     heatmap = torch.nn.functional.relu(heatmap)
-    heatmap /= heatmap.amax()
     image = unnormalize(image)
     show = image*heatmap[..., None]
     plt.imshow(show.cpu(), vmin=0, vmax=1)

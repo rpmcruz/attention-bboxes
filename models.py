@@ -266,12 +266,12 @@ class Bboxes2Heatmap(torch.nn.Module):
         yy = torch.arange((1/h)/2, 1, 1/h, device=bboxes.device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
         heatmaps = self.f(xx[None, None], yy[None, None], bboxes[:, 0][..., None, None], bboxes[:, 1][..., None, None], bboxes[:, 2][..., None, None], bboxes[:, 3][..., None, None])
-        heatmaps = heatmaps / (1e-5+torch.amax(heatmaps, 1, True))  # max=1
         if self.use_sigmoid:
             scores = torch.sigmoid(scores)
         else:
             scores = torch.softmax(scores, 1)
         heatmap = torch.sum(scores[..., None, None]*heatmaps, 1)
+        heatmap = heatmap / (1e-5+torch.amax(heatmap, (1, 2), True))  # max=1
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):

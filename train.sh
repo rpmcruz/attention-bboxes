@@ -1,7 +1,8 @@
 #!/bin/bash
 
 DATASETS="Birds StanfordCars StanfordDogs"
-PENALTIES="0 0.001 0.1 1 10"
+#PENALTIES="0 0.001 0.1 1 10"
+PENALTIES="0"
 
 for DATASET in $DATASETS; do
 
@@ -11,7 +12,7 @@ for MODEL in $MODELS; do
 NAME="model-$DATASET-$MODEL.pth"
 if [ ! -f $NAME ]; then
 echo $NAME
-sbatch python3 train.py model-$DATASET-$MODEL.pth $DATASET $MODEL
+sbatch python train.py model-$DATASET-$MODEL.pth $DATASET $MODEL
 fi
 done
 
@@ -22,12 +23,12 @@ for PENALTY in $PENALTIES; do
 NAME="model-$DATASET-$MODEL-l1-$PENALTY-occlusion-$OCCLUSION-sigmoid.pth"
 if [ ! -f $NAME ]; then
 echo $NAME
-sbatch python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --occlusion $OCCLUSION --sigmoid
+sbatch python train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --occlusion $OCCLUSION --sigmoid
 fi
 NAME="model-$DATASET-$MODEL-l1-$PENALTY-occlusion-$OCCLUSION-sigmoid-adversarial.pth"
 if [ ! -f $NAME ]; then
 echo $NAME
-sbatch python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --occlusion $OCCLUSION --sigmoid --adversarial
+sbatch python train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --occlusion $OCCLUSION --sigmoid --adversarial
 fi
 done
 done
@@ -42,12 +43,12 @@ for OCCLUSION in $OCCLUSIONS; do
 NAME="model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-occlusion-$OCCLUSION-sigmoid.pth"
 if [ ! -f $NAME ]; then
 echo $NAME
-sbatch python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --occlusion $OCCLUSION --sigmoid
+sbatch python train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --occlusion $OCCLUSION --sigmoid
 fi
 NAME="model-$DATASET-$MODEL-l1-$PENALTY-heatmap-$HEATMAP-occlusion-$OCCLUSION-sigmoid-adversarial.pth"
 if [ ! -f $NAME ]; then
 echo $NAME
-sbatch python3 train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --occlusion $OCCLUSION --sigmoid --adversarial
+sbatch python train.py $NAME $DATASET $MODEL --penalty-l1 $PENALTY --heatmap $HEATMAP --occlusion $OCCLUSION --sigmoid --adversarial
 fi
 done
 done
