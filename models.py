@@ -271,7 +271,8 @@ class Bboxes2Heatmap(torch.nn.Module):
         else:
             scores = torch.softmax(scores, 1)
         heatmap = torch.sum(scores[..., None, None]*heatmaps, 1)
-        heatmap = heatmap / (1e-5+torch.amax(heatmap, (1, 2), True))  # max=1
+        # normalize and stop gradients for the denominator
+        heatmap = heatmap / (1e-5+torch.amax(heatmap, (1, 2), True).detach())  # max=1
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):

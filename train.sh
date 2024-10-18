@@ -2,7 +2,7 @@
 
 DATASETS="Birds StanfordCars StanfordDogs"
 #PENALTIES="0 0.001 0.1 1 10"
-PENALTIES="0"
+PENALTIES="0 0.001 0.1 1"
 
 for DATASET in $DATASETS; do
 

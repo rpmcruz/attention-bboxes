@@ -14,7 +14,7 @@ def CAM(model, layer_act, layer_fc, x, y):
     h.remove()
     w = layer_fc.weight[y]
     heatmap = torch.sum(w[..., None, None]*act, 1)
-    heatmap = heatmap / heatmap.amax((1, 2), True)
+    heatmap = heatmap / torch.amax(torch.abs(heatmap), (1, 2), True)
     return heatmap
 
 # https://ieeexplore.ieee.org/document/8237336
@@ -36,7 +36,7 @@ def GradCAM(model, layer_act, layer_fc, x, y):
     # in the paper, they use relu to eliminate the negative values
     # (but maybe we want them to improve our metrics like degredation score)
     heatmap = torch.sum(w[..., None, None]*act, 1)
-    heatmap = heatmap / heatmap.amax((1, 2), True)
+    heatmap = heatmap / torch.amax(torch.abs(heatmap), (1, 2), True)
     return heatmap
 
 # https://arxiv.org/abs/1704.02685
@@ -48,7 +48,7 @@ def DeepLIFT(model, layer_act, layer_fc, x, y):
     delta = pred_x - pred_baseline
     delta.sum().backward()
     heatmap = torch.mean((x - baseline) * x.grad, 1)
-    heatmap = heatmap / heatmap.amax((1, 2), True)
+    heatmap = heatmap / torch.amax(torch.abs(heatmap), (1, 2), True)
     return heatmap
 
 def Occlusion(model, layer_act, layer_fc, x, y):

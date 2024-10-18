@@ -1,8 +1,9 @@
 #!/bin/bash
 
 #DATASETS="Birds StanfordCars StanfordDogs"
-DATASETS="$1"
-PENALTIES="0 0.001 0.1 1 10"
+DATASETS=$1
+#PENALTIES="0 0.001 0.1 1 10"
+PENALTIES="0 0.001 0.1 1"
 XAI="CAM GradCAM DeepLIFT Occlusion"
 MODELS="SimpleDet FasterRCNN FCOS DETR"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
@@ -22,6 +23,11 @@ done
 
 # baseline: protopnet
 model="model-$dataset-ProtoPNet.pth"
+python test.py $model $dataset --protopnet
+python test.py $model $dataset --protopnet --crop
+
+# baseline: protopnet crop
+model="model-$dataset-ProtoPNet-crop.pth"
 python test.py $model $dataset --protopnet
 python test.py $model $dataset --protopnet --crop
 

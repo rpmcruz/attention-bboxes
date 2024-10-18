@@ -63,14 +63,14 @@ tr = torch.utils.data.DataLoader(ds, args.batchsize, True, num_workers=4, pin_me
 if args.model == 'ProtoPNet':
     backbone = models.Backbone()
     model = baseline_protopnet.ProtoPNet(backbone, ds.num_classes)
-    opt = torch.optim.Adam([
+    opt = torch.optim.AdamW([
         {'params': backbone.parameters(), 'lr': args.lr/10},
         {'params': list(model.features.parameters()) + list(model.prototype_layer.parameters())}
     ], args.lr)
-    late_opt = torch.optim.Adam(model.fc_layer.parameters(), args.lr)
+    late_opt = torch.optim.AdamW(model.fc_layer.parameters(), args.lr)
 elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
-    opt = torch.optim.Adam(model.parameters(), args.lr)
+    opt = torch.optim.AdamW(model.parameters(), args.lr)
 else:
     backbone = models.Backbone()
     classifier = models.Classifier(ds.num_classes)
@@ -85,7 +85,7 @@ else:
         heatmap = getattr(models, args.heatmap)(args.sigmoid)
     occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
     model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
-    opt = torch.optim.Adam([
+    opt = torch.optim.AdamW([
         {'params': backbone.parameters(), 'lr': args.lr/10},
         {'params': list(classifier.parameters()) + (list(detection.parameters()) if detection != None else [])}
     ], args.lr)
