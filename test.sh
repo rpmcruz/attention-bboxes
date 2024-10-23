@@ -3,11 +3,12 @@
 #DATASETS="Birds StanfordCars StanfordDogs"
 DATASETS=$1
 #PENALTIES="0 0.001 0.1 1 10"
-PENALTIES="0 0.001 0.1 1"
+PENALTIES="0 0.001 0.01 0.1 1"
 XAI="CAM GradCAM DeepLIFT Occlusion"
 MODELS="SimpleDet FasterRCNN FCOS DETR"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
-OCCLUSIONS="encoder image"
+OCCLUSIONS="encoder"
+#OCCLUSIONS="encoder image"
 
 echo "model,dataset,xai,crop,acc,pg,degscore,sparsity"
 
@@ -34,9 +35,9 @@ python test.py $model $dataset --protopnet --crop
 # proposal (with ablation)
 for occlusion in $OCCLUSIONS; do
     for penalty in $PENALTIES; do
-        model="model-$dataset-Heatmap-l1-$penalty-occlusion-$occlusion-sigmoid.pth"
+        model="model-$dataset-Heatmap-l1-$penalty-heatmap-none-occlusion-$occlusion-sigmoid.pth"
         python test.py $model $dataset
-        model="model-$dataset-Heatmap-l1-$penalty-occlusion-$occlusion-sigmoid-adversarial.pth"
+        model="model-$dataset-Heatmap-l1-$penalty-heatmap-none-occlusion-$occlusion-sigmoid-adversarial.pth"
         python test.py $model $dataset
         for objdet in $MODELS; do
             for heatmap in $HEATMAPS; do

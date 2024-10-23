@@ -3,9 +3,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('output')
 parser.add_argument('dataset')#, choices=['Birds', 'StanfordCars', 'StanfordDogs'])
 parser.add_argument('model', choices=['ProtoPNet', 'ViT', 'OnlyClass', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR'])
-parser.add_argument('--heatmap', choices=['GaussHeatmap', 'LogisticHeatmap'], default='GaussHeatmap')
+parser.add_argument('--heatmap', choices=['none', 'GaussHeatmap', 'LogisticHeatmap'], default='GaussHeatmap')
 parser.add_argument('--sigmoid', action='store_true')
-parser.add_argument('--penalty-l1', type=float, default=0)
+parser.add_argument('--l1', type=float, default=0)
 parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--occlusion', default='encoder', choices=['none', 'encoder', 'image'])
 parser.add_argument('--adversarial', action='store_true')
@@ -14,7 +14,11 @@ parser.add_argument('--batchsize', type=int, default=8)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--visualize', action='store_true')
 parser.add_argument('--fast', action='store_true')
+parser.add_argument('--resume')
 args = parser.parse_args()
+
+# ugly, but this makes it easier for the script
+if args.resume == 'none': args.resume = None
 
 import torch
 from torchvision.transforms import v2
@@ -72,23 +76,32 @@ elif args.model == 'ViT':
     model = baseline_vit.ViT(ds.num_classes)
     opt = torch.optim.AdamW(model.parameters(), args.lr)
 else:
-    backbone = models.Backbone()
-    classifier = models.Classifier(ds.num_classes)
-    if args.model == 'OnlyClass':
-        detection = None
-        heatmap = None
-    elif args.model == 'Heatmap':
-        detection = models.Heatmap(args.sigmoid)
-        heatmap = None
+    if args.resume:
+        model = torch.load(args.resume, device)
+        backbone = model.backbone
+        classifier = model.classifier
+        detection = model.detection
+        heatmap = model.bboxes2heatmap
+        occlusion = model.occlusion_level
     else:
-        detection = getattr(models, args.model)()
-        heatmap = getattr(models, args.heatmap)(args.sigmoid)
-    occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
-    model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
+        backbone = models.Backbone()
+        classifier = models.Classifier(ds.num_classes)
+        if args.model == 'OnlyClass':
+            detection = None
+            heatmap = None
+        elif args.model == 'Heatmap':
+            detection = models.Heatmap(args.sigmoid)
+            heatmap = None
+        else:
+            detection = getattr(models, args.model)()
+            heatmap = getattr(models, args.heatmap)(args.sigmoid)
+        occlusion = 'none' if args.model == 'OnlyClass' else args.occlusion
+        model = models.Occlusion(backbone, classifier, detection, heatmap, occlusion, args.adversarial)
     opt = torch.optim.AdamW([
         {'params': backbone.parameters(), 'lr': args.lr/10},
         {'params': list(classifier.parameters()) + (list(detection.parameters()) if detection != None else [])}
     ], args.lr)
+    #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt)
 model.to(device)
 
 ############################# LOOP #############################
@@ -97,6 +110,14 @@ visualize_batch = next(iter(torch.utils.data.DataLoader(ds_noaug, 4)))
 
 model.train()
 for epoch in range(args.epochs):
+    # make it smoother by training with a low learning rate and then increase
+    if args.model != 'OnlyClass':
+        magnitude = 2 if epoch < 10 else 1 if epoch < 20 else 0
+        lr = args.lr / 10**magnitude
+        assert len(opt.param_groups) == 2
+        opt.param_groups[0]['lr'] = lr/10
+        opt.param_groups[1]['lr'] = lr
+
     tic = time()
     avg_losses = {}
     avg_metrics = {}
@@ -112,7 +133,7 @@ for epoch in range(args.epochs):
             avg_losses['stage1'] = avg_losses.get('stage1', 0) + float(stage1_loss)/len(tr)
         if 'heatmap' in pred:
             l1 = torch.mean(pred['heatmap'])
-            loss += args.penalty_l1 * l1
+            loss += args.l1 * l1
             avg_losses['l1'] = avg_losses.get('l1', 0) + float(l1)/len(tr)
         if 'bboxes' in pred:
             avg_metrics['bbox_size'] = avg_metrics.get('bbox_size', 0) + float(torch.mean(pred['bboxes'][:, 2:]))/len(tr)
@@ -216,6 +237,13 @@ for epoch in range(args.epochs):
         model.backbone.train()
     toc = time()
     print(f'Epoch {epoch+1}/{args.epochs} - {toc-tic:.0f}s - Avg loss: {" - ".join(f'{k}={v}' for k, v in avg_losses.items())} - Avg metrics: {" - ".join(f'{k}={v}' for k, v in avg_metrics.items())}')
+    '''
+    scheduler.step(avg_losses['loss'])
+    lr = [group['lr'] for group in opt.param_groups][0]
+    if lr < 1e-5:  # 1e-3 (default) -> 1e-4 -> 1e-5 -> stop
+        print('Stop due to small lr:', lr, 'after', epoch, 'epochs')
+        break
+    '''
     if args.visualize:
         with torch.no_grad():
             x, _, y = visualize_batch
