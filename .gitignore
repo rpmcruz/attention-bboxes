@@ -3,3 +3,5 @@ __pycache__/
 *.png
 nohup.out
 sbatch-*.txt
+*.tex
+*.pdf

@@ -7,12 +7,16 @@ args = parser.parse_args()
 import pandas as pd
 import re
 
+pd.set_option('display.max_columns', None)
+
 df = pd.read_csv(args.results)
 
 df['l1'] = [re.search(r'-l1-([\d.]+)-', model).group(1) if '-l1-' in model else '' for model in df['model']]
 df['heatmap'] = [re.search(r'-heatmap-(\w+)-', model).group(1)[:-7] if '-heatmap-' in model else '' for model in df['model']]
-df['adversarial'] = [model.endswith('-adversarial') for model in df['model']]
-df['model'] = [model.split('-')[2] for model in df['model']]
+df['occlusion'] = [re.search(r'-occlusion-(\w+)-', model).group(1) if '-occlusion-' in model else '' for model in df['model']]
+df['adversarial'] = ['1' if model.endswith('-adversarial') else '0' if model.endswith('-sigmoid') else '' for model in df['model']]
+df['objdet'] = [model.split('-')[2] for model in df['model']]
+df['model2'] = [row['xai'] if row['model'].endswith('-OnlyClass') else f'ProtoPNet (train=full/test={'crop' if row["crop"] else 'full'})' if row['model'].endswith('-ProtoPNet') else f'ProtoPNet (train=crop/test={'crop' if row["crop"] else 'full'})' if row['model'].endswith('-ProtoPNet-crop') else f"Proposal ({row['objdet']})" for _, row in df.iterrows()]
 
 # filter options
 df = df[df['adversarial'] == args.adversarial]
