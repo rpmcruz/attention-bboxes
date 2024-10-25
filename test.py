@@ -53,7 +53,7 @@ if args.xai:
 acc = torchmetrics.classification.MulticlassAccuracy(ds.num_classes).to(device)
 pg = metrics.PointingGame().to(device)
 deg_score = metrics.DegradationScore(model).to(device)
-sparsity = metrics.Sparsity().to(device)
+sparsity = [metrics.Density().to(device), metrics.Entropy().to(device), metrics.TotalVariance().to(device)]
 
 for i, (x, mask, y) in enumerate(ts):
     x = x.to(device)
@@ -77,7 +77,8 @@ for i, (x, mask, y) in enumerate(ts):
         pred['heatmap'] = generate_heatmap(x, y)
     if 'heatmap' in pred:
         pg.update(pred['heatmap'], mask)
-        sparsity.update(pred['heatmap'])
+        for s in sparsity:
+            s.update(pred['heatmap'])
         # degradation score is too slow and requires too much vram, therefore downsample heatmaps that
         # are too large (like those produced by occlusion=image)
         heatmap = pred['heatmap']
@@ -102,4 +103,4 @@ for i, (x, mask, y) in enumerate(ts):
         fname = args.model + '-' + args.xai if args.xai else args.model
         plt.savefig(fname + '.png')
 
-print(args.model[:-4], args.dataset, args.xai, args.crop, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), sparsity.compute().item(), sep=',')
+print(args.model[:-4], args.dataset, args.xai, args.crop, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), *[s.compute().item() for s in sparsity], sep=',')

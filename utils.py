@@ -25,13 +25,15 @@ def draw_bboxes(image, bboxes, scores, nstdev=1):
         w, h = sw*nstdev, sh*nstdev
         x = cx - w/2
         y = cy - h/2
+        # TODO: maybe instead of alpha=score do if score > threshold (maybe control thickness)
         plt.gca().add_patch(patches.Rectangle((x, y), w, h, alpha=score.item(), linewidth=2, edgecolor='r', facecolor='none'))
-        xlim = (min(xlim[0], x), max(xlim[1], x+w))
-        ylim = (min(ylim[0], y), max(ylim[1], y+h))
+        #xlim = (min(xlim[0], x), max(xlim[1], x+w))
+        #ylim = (min(ylim[0], y), max(ylim[1], y+h))
     plt.xlim(xlim)
     plt.ylim(ylim[::-1])
 
 def draw_heatmap(image, heatmap):
+    #print('heatmap:', heatmap.shape, heatmap.min(), heatmap.max())
     heatmap = torch.nn.functional.interpolate(heatmap[None, None], image.shape[1:], mode='bilinear')[0, 0]
     heatmap = torch.nn.functional.relu(heatmap)
     image = unnormalize(image)

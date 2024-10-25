@@ -72,7 +72,7 @@ class DegradationScore(torchmetrics.Metric):
             scores.append(score)
         return torch.stack(scores, 1)
 
-class Sparsity(torchmetrics.Metric):
+class Density(torchmetrics.Metric):
     # to measure how sparse the explanation is
     def __init__(self):
         super().__init__()
@@ -87,3 +87,40 @@ class Sparsity(torchmetrics.Metric):
 
     def compute(self):
         return self.l1 / self.total
+
+class Entropy(torchmetrics.Metric):
+    # to measure how sparse the explanation is
+    def __init__(self):
+        super().__init__()
+        self.add_state('entropy', default=torch.tensor(0.), dist_reduce_fx='sum')
+        self.add_state('total', default=torch.tensor(0), dist_reduce_fx='sum')
+
+    def update(self, heatmaps):
+        assert len(heatmaps.shape) == 3, f'heatmaps have more than three dimensions: {heatmaps.shape}'
+        heatmaps = heatmaps / heatmaps.sum((1, 2), True)
+        # avoid log(0) by replacing zeros with a very small value
+        heatmaps = torch.clamp(heatmaps, 1e-12)
+        self.entropy += -torch.sum(heatmaps * torch.log2(heatmaps))
+        self.total += len(heatmaps)
+
+    def compute(self):
+        return self.emtropy / self.total
+
+
+class TotalVariance(torchmetrics.Metric):
+    # to measure how sparse the explanation is
+    def __init__(self):
+        super().__init__()
+        self.add_state('variance', default=torch.tensor(0.), dist_reduce_fx='sum')
+        self.add_state('total', default=torch.tensor(0), dist_reduce_fx='sum')
+
+    def update(self, heatmaps):
+        assert len(heatmaps.shape) == 3, f'heatmaps have more than three dimensions: {heatmaps.shape}'
+        heatmaps = heatmaps / heatmaps.amax((1, 2), True)
+        dy = torch.mean(torch.abs(heatmaps[:, 1:]-heatmaps[:, :-1]), (1, 2))
+        dx = torch.mean(torch.abs(heatmaps[:, :, 1:]-heatmaps[:, :, :-1]), (1, 2))
+        self.variance += torch.sum((dx + dy)/2)
+        self.total += len(heatmaps)
+
+    def compute(self):
+        return self.variance / self.total

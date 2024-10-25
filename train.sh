@@ -1,12 +1,12 @@
 #!/bin/bash
 # train different model types
 
-#DATASETS="Birds StanfordCars StanfordDogs"
+#DATASETS="Birds2 Birds10 Birds StanfordCars StanfordDogs"
 DATASETS="$1"
 
 for DATASET in $DATASETS; do
 
-MODELS="OnlyClass"
+MODELS="OnlyClass ViT"
 for MODEL in $MODELS; do
 NAME="model-$DATASET-$MODEL.pth"
 if [ ! -f $NAME ]; then

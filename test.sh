@@ -19,12 +19,16 @@ python test.py $model $dataset
 
 # baseline: xai
 for xai in $XAI; do
-python test.py $model $dataset --xai $xai
+python test.py $model $dataset --xai $xai --visualize
 done
+
+# baseline: ViT
+model="model-$dataset-ViT.pth"
+python test.py $model $dataset
 
 # baseline: protopnet
 model="model-$dataset-ProtoPNet.pth"
-python test.py $model $dataset --protopnet
+python test.py $model $dataset --protopnet --visualize
 python test.py $model $dataset --protopnet --crop
 
 # baseline: protopnet crop
@@ -36,15 +40,15 @@ python test.py $model $dataset --protopnet --crop
 for occlusion in $OCCLUSIONS; do
     for penalty in $PENALTIES; do
         model="model-$dataset-Heatmap-l1-$penalty-heatmap-none-occlusion-$occlusion-sigmoid.pth"
-        python test.py $model $dataset
+        python test.py $model $dataset --visualize
         model="model-$dataset-Heatmap-l1-$penalty-heatmap-none-occlusion-$occlusion-sigmoid-adversarial.pth"
-        python test.py $model $dataset
+        python test.py $model $dataset --visualize
         for objdet in $MODELS; do
             for heatmap in $HEATMAPS; do
                 model="model-$dataset-$objdet-l1-$penalty-heatmap-$heatmap-occlusion-$occlusion-sigmoid.pth"
-                python test.py $model $dataset
+                python test.py $model $dataset --visualize
                 model="model-$dataset-$objdet-l1-$penalty-heatmap-$heatmap-occlusion-$occlusion-sigmoid-adversarial.pth"
-                python test.py $model $dataset
+                python test.py $model $dataset --visualize
             done
         done
     done
