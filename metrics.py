@@ -104,7 +104,7 @@ class Entropy(torchmetrics.Metric):
         self.total += len(heatmaps)
 
     def compute(self):
-        return self.emtropy / self.total
+        return self.entropy / self.total
 
 
 class TotalVariance(torchmetrics.Metric):
