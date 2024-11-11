@@ -270,16 +270,16 @@ class Bboxes2Heatmap(torch.nn.Module):
             scores = torch.sigmoid(scores)
         else:
             scores = torch.softmax(scores, 1)
+        # normalize heatmaps. notice we stop gradients for the denominator.
+        heatmaps = heatmaps / (1e-5+torch.amax(heatmaps, 1, True).detach())  # max=1
         heatmap = torch.sum(scores[..., None, None]*heatmaps, 1)
-        # normalize and stop gradients for the denominator
-        heatmap = heatmap / (1e-5+torch.amax(heatmap, (1, 2), True).detach())  # max=1
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):
     def f(self, x, y, xc, yc, sigma_w, sigma_h):
         # https://en.wikipedia.org/wiki/Gaussian_function
         # \operatorname{exp}(-2\frac{(x-c)^{2}}{2(\frac{w}{2})^{2}})
-        # assuming sigma=width/height
+        # assuming sigma=width or height
         xx = (x-xc)**2
         yy = (y-yc)**2
         ww = (sigma_w/2)**2

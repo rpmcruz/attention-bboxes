@@ -2,7 +2,7 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('output')
 parser.add_argument('dataset')#, choices=['Birds', 'StanfordCars', 'StanfordDogs'])
-parser.add_argument('model', choices=['ViT', 'OnlyClass', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR'])
+parser.add_argument('model', choices=['ViTb', 'ViTl', 'OnlyClass', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR'])
 parser.add_argument('--heatmap', choices=['none', 'GaussHeatmap', 'LogisticHeatmap'], default='GaussHeatmap')
 parser.add_argument('--sigmoid', action='store_true')
 parser.add_argument('--l1', type=float, default=0)
@@ -64,8 +64,8 @@ tr = torch.utils.data.DataLoader(ds, args.batchsize, True, num_workers=4, pin_me
 
 ############################# MODEL #############################
 
-if args.model == 'ViT':
-    model = baseline_vit.ViT(ds.num_classes)
+if args.model.startswith('ViT'):
+    model = getattr(baseline_vit, args.model)(ds.num_classes)
     opt = torch.optim.AdamW(model.parameters(), args.lr)
 else:
     if args.resume:
@@ -103,7 +103,7 @@ visualize_batch = next(iter(torch.utils.data.DataLoader(ds_noaug, 4)))
 model.train()
 for epoch in range(args.epochs):
     # make it smoother by training with a low learning rate and then increase
-    if args.model != 'OnlyClass':
+    if args.model != 'OnlyClass' and not args.model.startswith('ViT'):
         magnitude = 2 if epoch < 10 else 1 if epoch < 20 else 0
         lr = args.lr / 10**magnitude
         if len(opt.param_groups) == 2:

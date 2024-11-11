@@ -10,7 +10,7 @@ HEATMAPS="GaussHeatmap LogisticHeatmap"
 OCCLUSIONS="encoder"
 #OCCLUSIONS="encoder image"
 
-echo "model,dataset,xai,crop,acc,pg,degscore,sparsity"
+echo "model,dataset,xai,crop,acc,pg,degscore,density,entropy,totalvariance"
 
 for dataset in $DATASETS; do
 # baseline: no heatmap (only class)
@@ -23,7 +23,9 @@ python test.py $model $dataset --xai $xai --visualize
 done
 
 # baseline: ViT
-model="model-$dataset-ViT.pth"
+model="model-$dataset-ViTb.pth"
+python test.py $model $dataset
+model="model-$dataset-ViTl.pth"
 python test.py $model $dataset
 
 # baseline: protopnet

@@ -6,12 +6,22 @@ DATASETS="$1"
 
 for DATASET in $DATASETS; do
 
-MODELS="OnlyClass ViT"
+MODELS="OnlyClass"
 for MODEL in $MODELS; do
 NAME="model-$DATASET-$MODEL.pth"
 if [ ! -f $NAME ]; then
 echo $NAME
 sbatch python train.py model-$DATASET-$MODEL.pth $DATASET $MODEL
+fi
+done
+
+# more epochs for ViT
+MODELS="ViTb ViTl"
+for MODEL in $MODELS; do
+NAME="model-$DATASET-$MODEL.pth"
+if [ ! -f $NAME ]; then
+echo $NAME
+sbatch python train.py model-$DATASET-$MODEL.pth $DATASET $MODEL --epochs 1000
 fi
 done
 
