@@ -66,6 +66,11 @@ def Birds2(root, fold, transform, crop=False):
     return SubsetLabels(Birds(root, fold, transform, crop), range(2))
 def Birds10(root, fold, transform, crop=False):
     return SubsetLabels(Birds(root, fold, transform, crop), range(10))
+def Birds50(root, fold, transform, crop=False):
+    return SubsetLabels(Birds(root, fold, transform, crop), range(50))
+def Birds100(root, fold, transform, crop=False):
+    return SubsetLabels(Birds(root, fold, transform, crop), range(100))
+Birds200 = Birds
 
 class StanfordCars:
     # https://www.kaggle.com/datasets/jessicali9530/stanford-cars-dataset
@@ -84,11 +89,13 @@ class StanfordCars:
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, i):
+    def __getitem__(self, i, only_label=False):
         d = self.data[i]
-        image = torchvision.io.read_image(os.path.join(self.root, d['fname']), torchvision.io.ImageReadMode.RGB)
         bbox = (d['bbox_x1'], d['bbox_y1'], d['bbox_x2'], d['bbox_y2'])
         label = d['class']-1
+        if only_label:
+            return label
+        image = torchvision.io.read_image(os.path.join(self.root, d['fname']), torchvision.io.ImageReadMode.RGB)
         if self.crop:
             image = image[:, bbox[1]:bbox[3]+1, bbox[0]:bbox[2]+1]
             mask = torch.ones(1, bbox[3]-bbox[1]+1, bbox[2]-bbox[0]+1, dtype=bool)
@@ -99,6 +106,14 @@ class StanfordCars:
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
+
+def StanfordCars10(root, fold, transform, crop=False):
+    return SubsetLabels(StanfordCars(root, fold, transform, crop), range(10))
+def StanfordCars50(root, fold, transform, crop=False):
+    return SubsetLabels(StanfordCars(root, fold, transform, crop), range(50))
+def StanfordCars100(root, fold, transform, crop=False):
+    return SubsetLabels(StanfordCars(root, fold, transform, crop), range(100))
+StanfordCars196 = StanfordCars
 
 class StanfordDogs:
     # http://vision.stanford.edu/aditya86/ImageNetDogs/
@@ -115,9 +130,11 @@ class StanfordDogs:
     def __len__(self):
         return len(self.files)
 
-    def __getitem__(self, i):
+    def __getitem__(self, i, only_label=False):
         fname = self.files[i]
         label = self.labels[i]
+        if only_label:
+            return label
         image = torchvision.io.read_image(os.path.join(self.root, 'Images', fname), torchvision.io.ImageReadMode.RGB)
         ann = ET.parse(os.path.join(self.root, 'Annotation', fname[:-4]))
         bboxes = [{c.tag: int(c.text) for c in bbox} for bbox in ann.findall('.//bndbox')]
@@ -134,6 +151,14 @@ class StanfordDogs:
         if self.transform:
             image, mask = self.transform(image, mask)
         return image, mask, label
+
+def StanfordDogs10(root, fold, transform, crop=False):
+    return SubsetLabels(StanfordDogs(root, fold, transform, crop), range(10))
+def StanfordDogs50(root, fold, transform, crop=False):
+    return SubsetLabels(StanfordDogs(root, fold, transform, crop), range(50))
+def StanfordDogs80(root, fold, transform, crop=False):
+    return SubsetLabels(StanfordDogs(root, fold, transform, crop), range(80))
+StanfordDogs120 = StanfordDogs
 
 if __name__ == '__main__':
     import argparse

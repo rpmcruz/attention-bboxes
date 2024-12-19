@@ -1,56 +1,59 @@
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('results')
-parser.add_argument('--adversarial', action='store_true')
+parser.add_argument('--gauss', action='store_true')
 args = parser.parse_args()
 
 import pandas as pd
 import re
-
-pd.set_option('display.max_columns', None)
-
+from itertools import groupby
 df = pd.read_csv(args.results)
 
-df['l1'] = [re.search(r'-l1-([\d.]+)-', model).group(1) if '-l1-' in model else '' for model in df['model']]
-df['heatmap'] = [re.search(r'-heatmap-(\w+)-', model).group(1)[:-7] if '-heatmap-' in model else '' for model in df['model']]
-df['occlusion'] = [re.search(r'-occlusion-(\w+)-', model).group(1) if '-occlusion-' in model else '' for model in df['model']]
-df['adversarial'] = ['1' if model.endswith('-adversarial') else '0' if model.endswith('-sigmoid') else '' for model in df['model']]
-df['objdet'] = [model.split('-')[2] for model in df['model']]
-df['model2'] = [row['xai'] if row['model'].endswith('-OnlyClass') else f'ProtoPNet (train=full/test={'crop' if row["crop"] else 'full'})' if row['model'].endswith('-ProtoPNet') else f'ProtoPNet (train=crop/test={'crop' if row["crop"] else 'full'})' if row['model'].endswith('-ProtoPNet-crop') else f"Proposal ({row['objdet']})" for _, row in df.iterrows()]
+# only bigger version of datasets
+datasets = list(df['dataset'].unique()[[i for i, (d1, d2) in enumerate(zip(df['dataset'].unique(), df['dataset'].unique()[1:])) if re.match(r'([A-Za-z]+)', d1).group(1) != re.match(r'([A-Za-z]+)', d2).group(1)]]) + [df['dataset'].unique()[-1]]
+datasets += [d for d in df['dataset'].unique() if re.match(r'^[A-Za-z]+$', d)]
+df = df.loc[df['dataset'].isin(datasets)]
+# drop ProtoPNet-crop and crop=True
+df = df.loc[df['model'] != 'model-Birds-ProtoPNet-crop']
+df = df.loc[df['crop'] == False]
+# drop OnlyClass except the following xAI methods
+xai_methods = ['CAM', 'GradCAM', 'DeepLIFT', 'Occlusion', 'IBA']
+df = df.loc[(df['model'] != 'OnlyClass') | (df['xai'].isin(xai_methods))]
+# heatmap only LogisticHeatmap (ignore Gauss)
+if args.gauss:
+    df = df.loc[~df['model'].str.contains('-LogisticHeatmap-')]
+else:
+    df = df.loc[~df['model'].str.contains('-GaussHeatmap-')]
 
-# filter options
-df = df[df['adversarial'] == args.adversarial]
+# rename model column
+df['model'] = [m.split('-')[2] for m in df['model']]
+df['dataset'] = [re.match(r'([A-Za-z]+)', d).group(1) for d in df['dataset']]
+df.loc[df['model'] == 'OnlyClass', 'model'] = df.loc[df['model'] == 'OnlyClass', 'xai']
 
-# sort
-model_order = ['OnlyClass', 'ProtoPNet', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR']
-df['model'] = pd.Categorical(df['model'], categories=model_order, ordered=True)
-df = df.sort_values(by=['model', 'heatmap', 'l1']).reset_index(drop=True)
-
-# choose highest pg score
-'''
-score = 'degscore'
-def get_max_pg_row(group):
+# choose highest score
+def get_max_score(group):
+    score = 'degscore'
     if group[score].notna().any():
         return group.loc[group[score].idxmax()]
     else:
         return group.iloc[0]  # if NaN, return the first row
-df = df.groupby(['model', 'dataset', 'heatmap'], as_index=False).apply(get_max_pg_row, include_groups=False)
-'''
+df = df.groupby(['dataset', 'model'], as_index=False, observed=True).apply(get_max_score, include_groups=False)
 
-print(r'\documentclass{article}')
-print(r'\usepackage[a4paper, margin=2cm]{geometry}')
+# sort rows
+model_order = xai_methods + ['ProtoPNet', 'ViTb', 'ViTl', 'ViTr', 'Heatmap', 'SimpleDet', 'FasterRCNN', 'FCOS', 'DETR']
+df['model'] = pd.Categorical(df['model'], categories=model_order, ordered=True)
+df = df.sort_values(by=['dataset', 'model']).reset_index(drop=True)
+
+# columns order and filter
+df = df[['dataset', 'model', 'acc', 'degscore', 'pg', 'density', 'totalvariance', 'entropy']]
+
+print(r'\documentclass{standalone}')
 print(r'\usepackage[table]{xcolor}')
 print(r'\begin{document}')
-print(r'\hspace{-5em}')
-latex = df.style \
-      .hide(axis=0) \
-      .background_gradient('RdYlGn') \
-      .to_latex(convert_css=True)#, column_format='|llrrrr|')
-#.format(precision=0) \
-last_model = None
-for i, line in enumerate(latex.splitlines()):
-    if i > 0 and line.split()[0] != last_model:
-        print(r'\hline')
-        last_model = line.split()[0]
-    print(line)
+print(r'\footnotesize')
+print(df.style
+    .hide(axis=0)
+    .background_gradient('RdYlGn')
+    .format({col: lambda x: f'{x*100:.1f}' if type(x) == float else x for col in df.columns})
+    .to_latex(convert_css=True))
 print(r'\end{document}')

@@ -1,13 +1,20 @@
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('results')
-parser.add_argument('output')
 args = parser.parse_args()
 
 import pandas as pd
-import numpy as np
-
 df = pd.read_csv(args.results)
+
+# filter models
+df = df.loc[
+    df['model'].str.endswith('-OnlyClass') &
+    df['model'].str.endswith('-ViTb') &
+    df['model'].str.endswith('-ViTr') &
+    df['model'].str.endswith('-FasterRCNN') &
+    df['model'].str.endswith('-FCOS') &
+    df['model'].str.endswith('-DETR')]
+
 
 df.drop(columns=['captum', 'crop'], inplace=True)
 

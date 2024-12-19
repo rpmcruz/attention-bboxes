@@ -1,3 +1,6 @@
+# 2024 Ricardo Cruz <ricardo.pdm.cruz@gmail.com> 
+# Implementation of interpretability metrics.
+
 import torchmetrics
 import torch
 
@@ -99,8 +102,8 @@ class Entropy(torchmetrics.Metric):
         assert len(heatmaps.shape) == 3, f'heatmaps have more than three dimensions: {heatmaps.shape}'
         heatmaps = heatmaps / heatmaps.sum((1, 2), True)
         # avoid log(0) by replacing zeros with a very small value
-        heatmaps = torch.clamp(heatmaps, 1e-12)
-        self.entropy += -torch.sum(heatmaps * torch.log2(heatmaps))
+        den = torch.prod(torch.tensor(heatmaps.shape[1:]))
+        self.entropy += -torch.sum(heatmaps * torch.log2(heatmaps+1e-12) / torch.log2(den))
         self.total += len(heatmaps)
 
     def compute(self):

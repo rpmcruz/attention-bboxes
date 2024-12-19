@@ -1,9 +1,15 @@
-# implementation of xAI methods
+# 2024 Ricardo Cruz <ricardo.pdm.cruz@gmail.com> 
+# Implementation of xAI methods.
 
-import torch
+import torch, torchvision
+
+# In the case of ResNet-50:
+# layer_mid = features.layer2
+# layer_act = features.layer4[-1].conv3
+# layer_fc  = features.fc
 
 # https://arxiv.org/abs/1512.04150
-def CAM(model, layer_act, layer_fc, x, y):
+def CAM(model, layer_mid, layer_act, layer_fc, x, y):
     act = None
     def act_fhook(_, input, output):
         nonlocal act
@@ -12,13 +18,13 @@ def CAM(model, layer_act, layer_fc, x, y):
     with torch.no_grad():
         model(x)
     h.remove()
-    w = layer_fc.weight[y]
+    w = layer_fc.weight[y, :]
     heatmap = torch.sum(w[..., None, None]*act, 1)
-    heatmap = heatmap / (1e-5+torch.amax(torch.abs(heatmap), (1, 2), True))
+    heatmap = heatmap / (torch.amax(torch.abs(heatmap), (1, 2), True).clamp(min=1e-6))
     return heatmap
 
 # https://ieeexplore.ieee.org/document/8237336
-def GradCAM(model, layer_act, layer_fc, x, y):
+def GradCAM(model, layer_mid, layer_act, layer_fc, x, y):
     act = w = None
     def act_fhook(_, input, output):
         nonlocal act
@@ -36,11 +42,11 @@ def GradCAM(model, layer_act, layer_fc, x, y):
     # in the paper, they use relu to eliminate the negative values
     # (but maybe we want them to improve our metrics like degredation score)
     heatmap = torch.sum(w[..., None, None]*act, 1)
-    heatmap = heatmap / (1e-5+torch.amax(torch.abs(heatmap), (1, 2), True))
+    heatmap = heatmap / (torch.amax(torch.abs(heatmap).clamp(min=1e-6), (1, 2), True))
     return heatmap
 
 # https://arxiv.org/abs/1704.02685
-def DeepLIFT(model, layer_act, layer_fc, x, y):
+def DeepLIFT(model, layer_mid, layer_act, layer_fc, x, y):
     baseline = torch.zeros_like(x)
     x.requires_grad = True
     pred_baseline = model(baseline)['class'][range(len(y)), y]
@@ -51,7 +57,7 @@ def DeepLIFT(model, layer_act, layer_fc, x, y):
     heatmap = heatmap / (1e-5+torch.amax(torch.abs(heatmap), (1, 2), True))
     return heatmap
 
-def Occlusion(model, layer_act, layer_fc, x, y):
+def Occlusion(model, layer_mid, layer_act, layer_fc, x, y):
     occ_w = x.shape[3]//7
     occ_h = x.shape[2]//7
     heatmap = torch.zeros(len(x), 7, 7, device=x.device)
@@ -61,5 +67,46 @@ def Occlusion(model, layer_act, layer_fc, x, y):
             occ_img[:, :, occ_x:occ_y+occ_h, occ_x:occ_x+occ_w] = 0
             with torch.no_grad():
                 prob = torch.softmax(model(occ_img)['class'], 1)[range(len(y)), y]
-                heatmap[:, occ_j, occ_i] = prob
+                heatmap[:, occ_j, occ_i] = 1-prob
     return heatmap
+
+# https://openreview.net/forum?id=S1xWh1rYwB
+def IBA(model, layer_mid, layer_act, layer_fc, x, y, lr=1, num_steps=100, sigma=1, beta=10):
+    # one forward pass to get the mid shape
+    mid_shape = None
+    def mid_fhook(_, input, output):
+        nonlocal mid_shape
+        mid_shape = output.shape
+    fh = layer_mid.register_forward_hook(mid_fhook)
+    model(x)
+    fh.remove()
+    # apply bottleneck
+    alpha = torch.nn.Parameter(5*torch.ones(mid_shape, device=x.device))
+    mask = R_norm = Z = None
+    def mid_fhook(_, input, output):
+        nonlocal mask, R_norm, Z
+        # inject gaussian noise
+        mean = output.mean((2, 3), keepdim=True)
+        std = output.std((2, 3), keepdim=True).clamp(min=1e-6)
+        noise = torch.normal(mean, std).to(output.device)
+        mask = torch.sigmoid(alpha)
+        mask = torchvision.transforms.functional.gaussian_blur(mask, 5, sigma)
+        R_norm = (output - mean) / std
+        Z = mask*output + (1-mask)*noise
+        return Z
+    fh = layer_mid.register_forward_hook(mid_fhook)
+    optimizer = torch.optim.Adam([alpha], lr)
+    for _ in range(num_steps):
+        optimizer.zero_grad()
+        output = model(x)['class']
+        # L = LCE + βLI  (accurate, but minimize the information passed)
+        # same code as the authors
+        ce = torch.nn.functional.cross_entropy(output, y)
+        mu_Z = R_norm * mask
+        var_Z = ((1-mask) ** 2).clamp(min=1e-6)
+        information_loss = torch.mean(-0.5 * (1 + torch.log(var_Z) - mu_Z**2 - var_Z))
+        loss = ce + beta*information_loss
+        loss.backward()
+        optimizer.step()
+    fh.remove()
+    return mask.mean(1)

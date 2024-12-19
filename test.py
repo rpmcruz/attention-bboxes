@@ -44,16 +44,16 @@ generate_heatmap = None
 if args.xai:
     xai = getattr(xai, args.xai)
     if args.protopnet:
-        generate_heatmap = lambda x, y: xai(model, model.features.layer4[-1].conv3, model.features.fc, x, y)
+        generate_heatmap = lambda x, y: xai(model, model.features.layer2, model.features.layer4[-1].conv3, model.features.fc, x, y)
     else:
-        generate_heatmap = lambda x, y: xai(model, model.backbone.resnet.layer4[-1].conv3, model.classifier.output, x, y)
+        generate_heatmap = lambda x, y: xai(model, model.backbone.resnet.layer2, model.backbone.resnet.layer4[-1].conv3, model.classifier.output, x, y)
 
 ############################# LOOP #############################
 
 acc = torchmetrics.classification.MulticlassAccuracy(ds.num_classes).to(device)
-pg = metrics.PointingGame().to(device)
 deg_score = metrics.DegradationScore(model).to(device)
-sparsity = [metrics.Density().to(device), metrics.Entropy().to(device), metrics.TotalVariance().to(device)]
+pg = metrics.PointingGame().to(device)
+sparsity = [metrics.Density().to(device), metrics.TotalVariance().to(device), metrics.Entropy().to(device)]
 
 for i, (x, mask, y) in enumerate(ts):
     x = x.to(device)
@@ -103,4 +103,4 @@ for i, (x, mask, y) in enumerate(ts):
         fname = args.model + '-' + args.xai if args.xai else args.model
         plt.savefig(fname + '.png')
 
-print(args.model[:-4], args.dataset, args.xai, args.crop, acc.compute().item(), pg.compute().item(), deg_score.compute().item(), *[s.compute().item() for s in sparsity], sep=',')
+print(args.model[:-4], args.dataset, args.xai, args.crop, acc.compute().item(), deg_score.compute().item(), pg.compute().item(), *[s.compute().item() for s in sparsity], sep=',')

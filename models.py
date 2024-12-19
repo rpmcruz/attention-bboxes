@@ -3,7 +3,7 @@ import torch, torchvision
 ############################# BASICS #############################
 
 class Occlusion(torch.nn.Module):
-    def __init__(self, backbone, classifier, detection, bboxes2heatmap, occlusion_level, is_adversarial):
+    def __init__(self, backbone, classifier, detection, bboxes2heatmap, occlusion_level, is_adversarial, score_act):
         super().__init__()
         self.backbone = backbone
         self.detection = detection
@@ -12,6 +12,8 @@ class Occlusion(torch.nn.Module):
         self.occlusion_level = occlusion_level
         self.is_adversarial = is_adversarial
         self.return_dict = True
+        assert score_act in ('sigmoid', 'softmax')
+        self.use_sigmoid = score_act == 'sigmoid'
 
     def forward(self, images):
         features = self.backbone(images)
@@ -22,6 +24,11 @@ class Occlusion(torch.nn.Module):
                 return self.classifier(embed)
             return {'class': self.classifier(embed)}
         det = self.detection(features)
+        if 'scores' in det:
+            if getattr(self, 'use_sigmoid', True) or self.use_sigmoid:
+                det['scores'] = torch.sigmoid(det['scores'])
+            else:  # softmax
+                det['scores'] = torch.softmax(det['scores'], 1)
         if 'bboxes' in det:
             # for numerical reasons (div0), set minimum size for width/height
             det['bboxes'] = torch.cat((det['bboxes'][:, :2], det['bboxes'][:, 2:] + 0.01), 1)
@@ -70,10 +77,10 @@ class Classifier(torch.nn.Module):
 # output format = cxcywh (normalized 0-1)
 
 class Heatmap(torch.nn.Module):
-    def __init__(self, use_sigmoid):
+    def __init__(self, score_act):
         super().__init__()
         self.conv = torch.nn.Conv2d(2048, 1, 3, padding=1)
-        self.use_sigmoid = use_sigmoid
+        self.use_sigmoid = score_act == 'sigmoid'
 
     def forward(self, features):
         heatmap = self.conv(features[-1])
@@ -256,26 +263,26 @@ class DETR(torch.nn.Module):
 ########################### PROPOSALS ###########################
 
 class Bboxes2Heatmap(torch.nn.Module):
-    def __init__(self, use_sigmoid):
-        super().__init__()
-        self.use_sigmoid = use_sigmoid
-
     def forward(self, output_shape, bboxes, scores):
         h, w = output_shape
         xx = torch.arange((1/w)/2, 1, 1/w, device=bboxes.device)
         yy = torch.arange((1/h)/2, 1, 1/h, device=bboxes.device)
         xx, yy = torch.meshgrid(xx, yy, indexing='xy')
         heatmaps = self.f(xx[None, None], yy[None, None], bboxes[:, 0][..., None, None], bboxes[:, 1][..., None, None], bboxes[:, 2][..., None, None], bboxes[:, 3][..., None, None])
-        if self.use_sigmoid:
-            scores = torch.sigmoid(scores)
-        else:
-            scores = torch.softmax(scores, 1)
         # normalize heatmaps. notice we stop gradients for the denominator.
         heatmaps = heatmaps / (1e-5+torch.amax(heatmaps, 1, True).detach())  # max=1
-        heatmap = torch.sum(scores[..., None, None]*heatmaps, 1)
+        # use max or sum to choose the best heatmap for each pixel
+        # if using sum, then we need to normalize afterwards
+        #heatmap = torch.amax(scores[..., None, None]*heatmaps, 1)
+        heatmaps = torch.sum(scores[..., None, None]*heatmaps, 1)
+        heatmap = heatmaps / (1e-5+torch.amax(heatmaps, (1, 2), True).detach())  # spatial 
         return heatmap
 
 class GaussHeatmap(Bboxes2Heatmap):
+    def __init__(self):
+        super().__init__()
+        self.k = torch.nn.parameter.Parameter(torch.tensor(2.))
+
     def f(self, x, y, xc, yc, sigma_w, sigma_h):
         # https://en.wikipedia.org/wiki/Gaussian_function
         # \operatorname{exp}(-2\frac{(x-c)^{2}}{2(\frac{w}{2})^{2}})
@@ -284,13 +291,18 @@ class GaussHeatmap(Bboxes2Heatmap):
         yy = (y-yc)**2
         ww = (sigma_w/2)**2
         hh = (sigma_h/2)**2
-        return torch.exp(-(xx*hh+yy*ww)/(2*ww*hh))
+        k = torch.nn.functional.elu(self.k)
+        return torch.exp(-(xx*hh+yy*ww)/(k*ww*hh))
 
 class LogisticHeatmap(Bboxes2Heatmap):
+    def __init__(self):
+        super().__init__()
+        self.k = torch.nn.parameter.Parameter(torch.tensor(50.))
+
     def f(self, x, y, xc, yc, w, h):
         # https://en.wikipedia.org/wiki/Logistic_function
         # \frac{\operatorname{exp}(-k(x-(c+\frac{w}{2})))}{(1+\operatorname{exp}(-k(x-(c-\frac{w}{2}))))\times (1+\operatorname{exp}(-k(x-(c+\frac{w}{2}))))}
-        k = 50
+        k = torch.nn.functional.elu(self.k)
         logistic_x = torch.sigmoid(k*(x-(xc-w/2))) * (1-torch.sigmoid(k*(x-(xc+w/2))))
         logistic_y = torch.sigmoid(k*(y-(yc-h/2))) * (1-torch.sigmoid(k*(y-(yc+h/2))))
         return logistic_x*logistic_y

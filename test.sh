@@ -1,58 +1,65 @@
 #!/bin/bash
 
 #DATASETS="Birds StanfordCars StanfordDogs"
-DATASETS=$1
-#PENALTIES="0 0.001 0.1 1 10"
-PENALTIES="0 0.001 0.01 0.1 1"
-XAI="CAM GradCAM DeepLIFT Occlusion"
+DATASETS="$1"
+PENALTIES="0 0.001 0.01 0.1 1 10 100 1000"
+XAI="CAM GradCAM DeepLIFT Occlusion IBA"
 MODELS="SimpleDet FasterRCNN FCOS DETR"
 HEATMAPS="GaussHeatmap LogisticHeatmap"
 OCCLUSIONS="encoder"
 #OCCLUSIONS="encoder image"
 
-echo "model,dataset,xai,crop,acc,pg,degscore,density,entropy,totalvariance"
+echo "model,dataset,xai,crop,acc,degscore,pg,density,totalvariance,entropy"
 
-for dataset in $DATASETS; do
+for DATASET in $DATASETS; do
+if [ $DATASET = Birds ]; then NCLASSES="10 50 100 200"; fi
+if [ $DATASET = StanfordCars ]; then NCLASSES="10 50 100 196"; fi
+if [ $DATASET = StanfordDogs ]; then NCLASSES="10 50 80 120"; fi
+
+# baseline: protopnet
+MODEL="model-$DATASET-ProtoPNet.pth"
+python test.py $MODEL $DATASET --protopnet
+python test.py $MODEL $DATASET --protopnet --crop
+# baseline: protopnet crop
+MODEL="model-$DATASET-ProtoPNet-crop.pth"
+python test.py $MODEL $DATASET --protopnet
+python test.py $MODEL $DATASET --protopnet --crop
+
+for NCLASS in $NCLASSES; do
 # baseline: no heatmap (only class)
-model="model-$dataset-OnlyClass.pth"
-python test.py $model $dataset
+MODEL="model-$DATASET$NCLASS-OnlyClass.pth"
+python test.py $MODEL $DATASET$NCLASS
 
 # baseline: xai
 for xai in $XAI; do
-python test.py $model $dataset --xai $xai --visualize
+python test.py $MODEL "$DATASET$NCLASS" --xai $xai
 done
 
 # baseline: ViT
-model="model-$dataset-ViTb.pth"
-python test.py $model $dataset
-model="model-$dataset-ViTl.pth"
-python test.py $model $dataset
-
-# baseline: protopnet
-model="model-$dataset-ProtoPNet.pth"
-python test.py $model $dataset --protopnet --visualize
-python test.py $model $dataset --protopnet --crop
-
-# baseline: protopnet crop
-model="model-$dataset-ProtoPNet-crop.pth"
-python test.py $model $dataset --protopnet
-python test.py $model $dataset --protopnet --crop
+MODEL="model-$DATASET$NCLASS-ViTb.pth"
+python test.py $MODEL "$DATASET$NCLASS"
+MODEL="model-$DATASET$NCLASS-ViTl.pth"
+python test.py $MODEL "$DATASET$NCLASS"
+MODEL="model-$DATASET$NCLASS-ViTr.pth"
+python test.py $MODEL "$DATASET$NCLASS"
 
 # proposal (with ablation)
 for occlusion in $OCCLUSIONS; do
     for penalty in $PENALTIES; do
-        model="model-$dataset-Heatmap-l1-$penalty-heatmap-none-occlusion-$occlusion-sigmoid.pth"
-        python test.py $model $dataset --visualize
-        model="model-$dataset-Heatmap-l1-$penalty-heatmap-none-occlusion-$occlusion-sigmoid-adversarial.pth"
-        python test.py $model $dataset --visualize
+        MODEL="model-$DATASET$NCLASS-Heatmap-l1-$penalty-heatmap-none-occlusion-$occlusion-sigmoid-1.pth"
+        python test.py $MODEL "$DATASET$NCLASS"
+        #model="model-$DATASET$NCLASS-Heatmap-l1-$penalty-heatmap-none-occlusion-$occlusion-sigmoid-1-adversarial-1.pth"
+        #python test.py $MODEL "$DATASET$NCLASS" --visualize
         for objdet in $MODELS; do
             for heatmap in $HEATMAPS; do
-                model="model-$dataset-$objdet-l1-$penalty-heatmap-$heatmap-occlusion-$occlusion-sigmoid.pth"
-                python test.py $model $dataset --visualize
-                model="model-$dataset-$objdet-l1-$penalty-heatmap-$heatmap-occlusion-$occlusion-sigmoid-adversarial.pth"
-                python test.py $model $dataset --visualize
+                MODEL="model-$DATASET$NCLASS-$objdet-l1-$penalty-heatmap-$heatmap-occlusion-$occlusion-sigmoid-1.pth"
+                python test.py $MODEL "$DATASET$NCLASS"
+                #MODEL="model-$DATASET$NCLASS-$objdet-l1-$penalty-heatmap-$heatmap-occlusion-$occlusion-sigmoid-1-adversarial-1.pth"
+                #python test.py $MODEL "$DATASET$NCLASS" --visualize
             done
         done
     done
+done
+
 done
 done  # $dataset
