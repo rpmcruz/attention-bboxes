@@ -106,7 +106,8 @@ class SimpleDet(torch.nn.Module):
             indexing='xy')
         bboxes = torch.sigmoid(self.bboxes(grid))
         bboxes = torch.flatten(torch.stack((
-            (1/w)/2 + xx[None].repeat(len(grid), 1, 1), (1/h)/2 + yy[None].repeat(len(grid), 1, 1),
+            (1/w)/2 + xx[None].repeat(len(grid), 1, 1),
+            (1/h)/2 + yy[None].repeat(len(grid), 1, 1),
             bboxes[:, 0], bboxes[:, 1]), 1), 2)
         scores = torch.flatten(self.scores(grid), 1)
         return {'bboxes': bboxes, 'scores': scores}

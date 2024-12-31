@@ -4,7 +4,6 @@ parser.add_argument('model')
 parser.add_argument('dataset')
 parser.add_argument('--xai')
 parser.add_argument('--protopnet', action='store_true')
-parser.add_argument('--nstdev', type=float, default=1)
 parser.add_argument('--crop', action='store_true')
 parser.add_argument('--batchsize', type=int, default=8)
 parser.add_argument('--visualize', action='store_true')
@@ -27,8 +26,16 @@ transforms = v2.Compose([
     v2.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 # we are testing with the train-set itself for now
-ds = getattr(data, args.dataset)('/data/toys', 'test', transforms, args.crop)
-ts = torch.utils.data.DataLoader(ds, args.batchsize, num_workers=4, pin_memory=True)
+ts = ds = getattr(data, args.dataset)('/data/toys', 'test', transforms, args.crop)
+if args.visualize:
+    # limit to 10 classes and the first example
+    limit = [None]*10
+    for i in range(len(ds)):
+        label = ds.__getitem__(i, True)
+        if label < len(limit) and limit[label] is None:
+            limit[label] = i
+    ts = torch.utils.data.Subset(ts, limit)
+ts = torch.utils.data.DataLoader(ts, 1 if args.visualize else args.batchsize, num_workers=4, pin_memory=True)
 
 ############################# MODEL #############################
 
@@ -85,22 +92,17 @@ for i, (x, mask, y) in enumerate(ts):
         if heatmap.shape[-1] > 7:
             heatmap = torch.nn.functional.interpolate(pred['heatmap'][:, None], (7, 7), mode='bilinear')[:, 0]
         deg_score.update(x, y, heatmap)
-    if args.visualize and i == 0:
-        import matplotlib.pyplot as plt
-        plt.rcParams['figure.figsize'] = (18, 8)
-        plt.clf()
-        for i in range(4):
-            plt.subplot(2, 4, i+1)
-            if 'bboxes' in pred:
-                utils.draw_bboxes(x[i].detach(), pred['bboxes'][i].detach(), pred['scores'][i].detach(), args.nstdev)
-            else:
-                utils.draw_image(x[i].detach())
-            plt.title(f"y={y[i]} ŷ={pred['class'][i].argmax()}")
-            if 'heatmap' in pred:
-                plt.subplot(2, 4, i+4+1)
-                utils.draw_heatmap(x[i].detach(), pred['heatmap'][i].detach())
-        plt.suptitle(f'{args.model[:-4]}')
-        fname = args.model + '-' + args.xai if args.xai else args.model
-        plt.savefig(fname + '.png')
+    if args.visualize:
+        from skimage.io import imsave
+        x = utils.unnormalize(x[0].detach())
+        imsave(f'image-{args.dataset}-{i:02d}.png', (x*255).cpu().type(torch.uint8))
+        if 'bboxes' in pred:
+            x = utils.draw(x.detach(), pred['heatmap'][0].detach(), pred['bboxes'][0].detach(), pred['scores'][0].detach())
+        else:
+            x = utils.draw(x.detach(), pred['heatmap'][0].detach(), None, None)
+        name = args.model
+        if args.xai != None:
+            name += '-' + args.xai
+        imsave('image-' + name + f'-{i:02d}.png', (x*255).cpu().type(torch.uint8))
 
 print(args.model[:-4], args.dataset, args.xai, args.crop, acc.compute().item(), deg_score.compute().item(), pg.compute().item(), *[s.compute().item() for s in sparsity], sep=',')

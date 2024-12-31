@@ -1,6 +1,6 @@
 import torch
-import matplotlib.pyplot as plt
-from matplotlib import patches
+from skimage.draw import rectangle
+from skimage.morphology import binary_erosion
 
 def unnormalize(image):
     mean = torch.tensor([0.485, 0.456, 0.406], device=image.device)[:, None, None]
@@ -8,34 +8,27 @@ def unnormalize(image):
     image = image*std + mean
     return image.permute(1, 2, 0)
 
-def draw_image(image):
-    plt.imshow(unnormalize(image).cpu())
-
-def draw_bboxes(image, bboxes, scores, nstdev=1):
-    draw_image(image)
+def draw(image, heatmap, bboxes, scores, threshold=0.1, nstdev=20):
+    heatmap = torch.nn.functional.interpolate(heatmap[None, None], image.shape[:-1], mode='bilinear')[0, 0]
+    heatmap = torch.nn.functional.relu(heatmap)
+    # normalize heatmap
+    heatmap = (heatmap-heatmap.min()) / (heatmap.max()-heatmap.min())
+    image = image*heatmap[..., None]
+    if bboxes is None:
+        return image
     # 68.27% of the data falls within 1 stddev of the mean
     # 86.64% of the data falls within 1.5 stddevs of the mean
     # 95.44% of the data falls within 2 stddevs of the mean
-    bboxes = bboxes.cpu() * torch.tensor([image.shape[2], image.shape[1]]*2)[:, None]
-    scores = torch.softmax(scores, 0)
-    scores = scores/scores.amax()
-    xlim = (0, image.shape[2])
-    ylim = (0, image.shape[1])
+    bboxes = bboxes.cpu() * torch.tensor([image.shape[1], image.shape[0]]*2)[:, None]
+    mask = torch.zeros(image.shape[0], image.shape[1], dtype=bool)
     for (cx, cy, sw, sh), score in zip(bboxes.T, scores):
         w, h = sw*nstdev, sh*nstdev
         x = cx - w/2
         y = cy - h/2
-        # TODO: maybe instead of alpha=score do if score > threshold (maybe control thickness)
-        plt.gca().add_patch(patches.Rectangle((x, y), w, h, alpha=score.item(), linewidth=2, edgecolor='r', facecolor='none'))
-        #xlim = (min(xlim[0], x), max(xlim[1], x+w))
-        #ylim = (min(ylim[0], y), max(ylim[1], y+h))
-    plt.xlim(xlim)
-    plt.ylim(ylim[::-1])
-
-def draw_heatmap(image, heatmap):
-    #print('heatmap:', heatmap.shape, heatmap.min(), heatmap.max())
-    heatmap = torch.nn.functional.interpolate(heatmap[None, None], image.shape[1:], mode='bilinear')[0, 0]
-    heatmap = torch.nn.functional.relu(heatmap)
-    image = unnormalize(image)
-    show = image*heatmap[..., None]
-    plt.imshow(show.cpu(), vmin=0, vmax=1)
+        # use threshold or alpha or thickness
+        if score >= threshold:
+            rr, cc = rectangle((y, x), extent=(h, w), shape=image.shape[:-1])
+            mask[rr, cc] = True
+    mask = mask & ~binary_erosion(mask)
+    image[mask] = torch.tensor((1, 0, 0), dtype=torch.float32, device=image.device)
+    return image
