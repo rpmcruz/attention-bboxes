@@ -2,6 +2,8 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('results')
 parser.add_argument('--gauss', action='store_true')
+parser.add_argument('--adversarial', action='store_true')
+parser.add_argument('--l10', action='store_true')
 args = parser.parse_args()
 
 import pandas as pd
@@ -24,8 +26,16 @@ if args.gauss:
     df = df.loc[~df['model'].str.contains('-LogisticHeatmap-')]
 else:
     df = df.loc[~df['model'].str.contains('-GaussHeatmap-')]
+if args.adversarial:
+    df = df.loc[df['model'].str.contains('-OnlyClass') | df['model'].str.contains('-ViT') | df['model'].str.contains('-ProtoPNet') | df['model'].str.contains('-adversarial-')]
+    df = df.loc[(~df['model'].str.contains('-adversarial-')) | df['model'].str.contains('-l1-0-')]
+else:
+    df = df.loc[~df['model'].str.contains('-adversarial-')]
+    if args.l10:
+        df = df.loc[df['model'].str.contains('-OnlyClass') | df['model'].str.contains('-ViT') | df['model'].str.contains('-ProtoPNet') | df['model'].str.contains('-l1-0-')]
 
 # rename model column
+df['l1'] = df['model'].str.extract(r'-l1-([0-9.]+)')
 df['model'] = [m.split('-')[2] for m in df['model']]
 df['dataset'] = [re.match(r'([A-Za-z]+)', d).group(1) for d in df['dataset']]
 df.loc[df['model'] == 'OnlyClass', 'model'] = df.loc[df['model'] == 'OnlyClass', 'xai']
@@ -45,7 +55,7 @@ df['model'] = pd.Categorical(df['model'], categories=model_order, ordered=True)
 df = df.sort_values(by=['dataset', 'model']).reset_index(drop=True)
 
 # columns order and filter
-df = df[['dataset', 'model', 'acc', 'degscore', 'pg', 'density', 'totalvariance', 'entropy']]
+df = df[['dataset', 'model', 'acc', 'degscore', 'pg', 'density', 'totalvariance', 'entropy', 'l1']]
 
 print(r'\documentclass{standalone}')
 print(r'\usepackage[table]{xcolor}')
