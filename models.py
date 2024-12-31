@@ -307,3 +307,21 @@ class LogisticHeatmap(Bboxes2Heatmap):
         logistic_x = torch.sigmoid(k*(x-(xc-w/2))) * (1-torch.sigmoid(k*(x-(xc+w/2))))
         logistic_y = torch.sigmoid(k*(y-(yc-h/2))) * (1-torch.sigmoid(k*(y-(yc+h/2))))
         return logistic_x*logistic_y
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('model', choices=['FasterRCNN', 'SimpleDet', 'FCOS', 'DETR'])
+    args = parser.parse_args()
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    backbone = Backbone()
+    det = globals()[args.model]()
+    x = torch.ones(1, 3, 224, 224)
+    ret = det(backbone(x))
+    print('bboxes:', ret['bboxes'].shape, 'scores:', ret['scores'].shape, ret['scores'].min(), ret['scores'].max())
+    plt.imshow(x[0].permute(1, 2, 0))
+    for bbox in ret['bboxes'][0].T[::10]:
+        bbox = bbox.detach() * torch.tensor((x.shape[3], x.shape[2], x.shape[3], x.shape[2]))
+        plt.gca().add_patch(patches.Rectangle((bbox[0]-bbox[2]/2, bbox[1]-bbox[3]/2), bbox[2], bbox[3], linewidth=1, edgecolor='r', facecolor='none'))
+    plt.show()
